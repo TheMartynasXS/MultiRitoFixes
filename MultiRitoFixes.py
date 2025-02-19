@@ -226,6 +226,7 @@ def parse_fantome(fantome_path: str) -> None:
             print(f"Bin File: {bin_path} THROWN AN EXCEPTION")
 
     for wad_name, wad_byte in wads_dict.items():
+        filesInWad.clear()
         wad = WAD()
         wad.read(path='blank-path', raw=wad_byte)
         chunk_datas = []
