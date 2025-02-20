@@ -108,6 +108,16 @@ def parse_bin(bin_path, bin_file):
     return bin_file
 
 bin_assets = set()
+def ddstotex(obj):
+    if obj.lower().endswith(".dds"):
+        pattern = re.compile(r"assets/(characters/[a-d])", re.IGNORECASE)
+        check = (re.match(pattern, obj) != None)
+        if check and (not (xxh64(obj.lower()).hexdigest()  in filesInWad)):
+            ext = re.compile(r"\.dds$", re.IGNORECASE)
+            print(f"Couldn't find {obj} in the wad renaming to .tex {xxh64(obj.lower()).hexdigest()}")
+            obj = re.sub(ext, ".tex", obj)
+    return obj
+
 #recursively search for string type values
 def searchForStringTypeValues(obj):
     if type(obj) == list:
@@ -115,7 +125,8 @@ def searchForStringTypeValues(obj):
             item = searchForStringTypeValues(item)
         pass
     elif type(obj) == str:
-        pass
+        obj = ddstotex(obj)
+        # ddstotex(obj)
         # if obj.lower().endswith(".dds"):
         #     pattern = re.compile(r"assets/(characters/[a-d])", re.IGNORECASE)
         #     check = re.match(pattern, obj) != None
@@ -132,21 +143,10 @@ def searchForStringTypeValues(obj):
         #         print(f"Found {obj} in the wad renaming to .dds")
         #         # obj = re.sub(ext, ".dds", obj)
     elif type(obj) == BINField and obj.type == BINType.String:
-        if obj.data.lower().endswith(".dds"):
-            pattern = re.compile(r"assets/(characters/[a-d])", re.IGNORECASE)
-            check = (re.match(pattern, obj.data) != None)
-            if check and (not (xxh64(obj.data.lower()).hexdigest()  in filesInWad)):
-                ext = re.compile(r"\.dds$", re.IGNORECASE)
-                print(f"Couldn't find {obj.data} in the wad renaming to .tex {xxh64(obj.data.lower()).hexdigest()}")
+        obj.data = ddstotex(obj.data)
+        # ddstotex(obj.data)
 
-                obj.data = re.sub(ext, ".tex", obj.data)
-        elif obj.data.lower().endswith(".tex"):
-            ext = re.compile(r"\.tex$", re.IGNORECASE)
-            if (xxh64(obj.data.lower()).hexdigest() in filesInWad):
-                # pass
-                new = xxh64(re.sub(ext, ".dds", obj.data.lower())).hexdigest()
-                print(f"Found {obj.data} in the wad renaming to .dds {new} ")
-                # obj.data = re.sub(ext, ".dds", obj.data)
+                # obj.data = re.sub(ext, ".tex", obj.data)
     elif type(obj) == BINField and obj.type == BINType.List:
         for listitem in obj.data:
             if hasattr(listitem, 'data'):
@@ -177,6 +177,11 @@ def parse_wad(wad_path: str) -> bytes:
     chunk_datas = []
     chunk_hashes = []
     with wad_file.stream(wad_path, 'rb+') as bs:
+        filesInWad.clear()
+        for chunk in wad_file.chunks:
+            chunk.read_data(bs)
+            if chunk.extension == 'dds' or chunk.extension == 'tex':
+                filesInWad.add(chunk.hash)
         for chunk in wad_file.chunks:
             chunk.read_data(bs)
             if chunk.extension == 'bin':
