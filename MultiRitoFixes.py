@@ -116,19 +116,30 @@ def searchForStringTypeValues(obj):
         pass
     elif type(obj) == str:
         if obj.lower().endswith(".dds"):
-            pattern = re.compile(r"assets/(characters/[e-z]|Shared)", re.IGNORECASE)
-            check = re.match(pattern, obj) == None
+            pattern = re.compile(r"assets/(characters/[a-d])", re.IGNORECASE)
+            check = re.match(pattern, obj) != None
             if check and (xxh64(obj.lower()).hexdigest() not in filesInWad):
                 ext = re.compile(r"\.dds$", re.IGNORECASE)
+                print(f"Couldn't find {obj} in the wad renaming to .tex")
                 obj = re.sub(ext, ".tex", obj)
-        pass
+        elif obj.lower().endswith(".tex"):
+            ext = re.compile(r"\.tex$", re.IGNORECASE)
+            if xxh64(re.sub(ext, ".dds", obj.lower())).hexdigest() in filesInWad:
+                print(f"Found {obj} in the wad renaming to .dds")
+                obj = re.sub(ext, ".dds", obj)
     elif type(obj) == BINField and obj.type == BINType.String:
         if obj.data.lower().endswith(".dds"):
-            pattern = re.compile(r"assets/(characters/[e-z]|Shared)", re.IGNORECASE)
-            check = re.match(pattern, obj.data) == None
+            pattern = re.compile(r"assets/(characters/[a-d])", re.IGNORECASE)
+            check = re.match(pattern, obj.data) != None
             if check and (xxh64(obj.data.lower()).hexdigest() not in filesInWad):
                 ext = re.compile(r"\.dds$", re.IGNORECASE)
+                print(f"Couldn't find {obj.data} in the wad renaming to .tex")
                 obj.data = re.sub(ext, ".tex", obj.data)
+        elif obj.data.lower().endswith(".tex"):
+            ext = re.compile(r"\.tex$", re.IGNORECASE)
+            if xxh64(re.sub(ext, ".dds", obj.data.lower())).hexdigest() in filesInWad:
+                print(f"Found {obj.data} in the wad renaming to .dds")
+                obj.data = re.sub(ext, ".dds", obj.data)
     elif type(obj) == BINField and obj.type == BINType.List:
         for listitem in obj.data:
             if hasattr(listitem, 'data'):
