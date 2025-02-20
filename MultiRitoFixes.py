@@ -115,31 +115,38 @@ def searchForStringTypeValues(obj):
             item = searchForStringTypeValues(item)
         pass
     elif type(obj) == str:
-        if obj.lower().endswith(".dds"):
-            pattern = re.compile(r"assets/(characters/[a-d])", re.IGNORECASE)
-            check = re.match(pattern, obj) != None
-            if check and (xxh64(obj.lower()).hexdigest() not in filesInWad):
-                ext = re.compile(r"\.dds$", re.IGNORECASE)
-                print(f"Couldn't find {obj} in the wad renaming to .tex")
-                obj = re.sub(ext, ".tex", obj)
-        elif obj.lower().endswith(".tex"):
-            ext = re.compile(r"\.tex$", re.IGNORECASE)
-            if xxh64(re.sub(ext, ".dds", obj.lower())).hexdigest() in filesInWad:
-                print(f"Found {obj} in the wad renaming to .dds")
-                obj = re.sub(ext, ".dds", obj)
+        pass
+        # if obj.lower().endswith(".dds"):
+        #     pattern = re.compile(r"assets/(characters/[a-d])", re.IGNORECASE)
+        #     check = re.match(pattern, obj) != None
+        #     if check and not(xxh64(obj.lower()).hexdigest() in filesInWad):
+        #         ext = re.compile(r"\.dds$", re.IGNORECASE)
+        #         print(f"Couldn't find {obj} in the wad renaming to .tex")
+        #         # obj = re.sub(ext, ".tex", obj)
+        #     else:
+        #         print(f"{check} {xxh64(obj.lower()).hexdigest()}")
+        # elif obj.lower().endswith(".tex"):
+        #     ext = re.compile(r"\.tex$", re.IGNORECASE)
+        #     if xxh64(re.sub(ext, ".dds", obj.lower())).hexdigest() in filesInWad:
+        #         pass
+        #         print(f"Found {obj} in the wad renaming to .dds")
+        #         # obj = re.sub(ext, ".dds", obj)
     elif type(obj) == BINField and obj.type == BINType.String:
         if obj.data.lower().endswith(".dds"):
             pattern = re.compile(r"assets/(characters/[a-d])", re.IGNORECASE)
-            check = re.match(pattern, obj.data) != None
-            if check and (xxh64(obj.data.lower()).hexdigest() not in filesInWad):
+            check = (re.match(pattern, obj.data) != None)
+            if check and (not (xxh64(obj.data.lower()).hexdigest()  in filesInWad)):
                 ext = re.compile(r"\.dds$", re.IGNORECASE)
-                print(f"Couldn't find {obj.data} in the wad renaming to .tex")
+                print(f"Couldn't find {obj.data} in the wad renaming to .tex {xxh64(obj.data.lower()).hexdigest()}")
+
                 obj.data = re.sub(ext, ".tex", obj.data)
         elif obj.data.lower().endswith(".tex"):
             ext = re.compile(r"\.tex$", re.IGNORECASE)
-            if xxh64(re.sub(ext, ".dds", obj.data.lower())).hexdigest() in filesInWad:
-                print(f"Found {obj.data} in the wad renaming to .dds")
-                obj.data = re.sub(ext, ".dds", obj.data)
+            if (xxh64(obj.data.lower()).hexdigest() in filesInWad):
+                # pass
+                new = xxh64(re.sub(ext, ".dds", obj.data.lower())).hexdigest()
+                print(f"Found {obj.data} in the wad renaming to .dds {new} ")
+                # obj.data = re.sub(ext, ".dds", obj.data)
     elif type(obj) == BINField and obj.type == BINType.List:
         for listitem in obj.data:
             if hasattr(listitem, 'data'):
@@ -248,6 +255,11 @@ def parse_fantome(fantome_path: str) -> None:
             for chunk in wad.chunks:
                 chunk.read_data(bs)
                 # print(f"chunk ext: {chunk.hash}")
+                if chunk.extension == 'dds' or chunk.extension == 'tex':
+                    filesInWad.add(chunk.hash)
+            for chunk in wad.chunks:
+                chunk.read_data(bs)
+                # print(f"chunk ext: {chunk.hash}")
                 if chunk.extension == 'bin':
                     try:
                         bin_file = BIN()
@@ -256,8 +268,6 @@ def parse_fantome(fantome_path: str) -> None:
                         chunk.data = bin_file.write(path='', raw=True)
                     except Exception:
                         print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION')
-                elif chunk.extension == 'dds' or chunk.extension == 'tex':
-                    filesInWad.add(chunk.hash)
                 chunk_datas.append(chunk.data)
                 chunk_hashes.append(chunk.hash)
 
