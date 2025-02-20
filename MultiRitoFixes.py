@@ -43,15 +43,15 @@ class CACHED_BIN_HASHES(dict):
             return super().__getitem__(key)
 
 # read from included txt file in pyinstaller with --add-data 'BannedPaths.txt;.'
-banned_paths = []
+allowed_chars = []
 if getattr(sys, 'frozen', False):
-    banned_paths_file = path.join(sys._MEIPASS, 'BannedPaths.txt')
+    allowed_chars = path.join(sys._MEIPASS, 'AllowedChars.txt')
 else:
-    banned_paths_file = 'BannedPaths.txt'
+    allowed_chars = 'AllowedChars.txt'
 
-if path.exists(banned_paths_file):
-    with open(banned_paths_file, 'r') as file:
-        banned_paths = [line.strip() for line in file.readlines()]
+if path.exists(allowed_chars):
+    with open(allowed_chars, 'r') as file:
+        allowed_chars = [line.strip() for line in file.readlines()]
 cached_bin = CACHED_BIN_HASHES()
 inpt = argv[1]
 def parse_bin(bin_path, bin_file):
@@ -60,11 +60,13 @@ def parse_bin(bin_path, bin_file):
         if entry.type == cached_bin['SkinCharacterDataProperties']:
             is_champion = False
             for field in entry.data:
-                if field.hash == cached_bin['ChampionSkinName']:
-                    if str(field.data).lower() in banned_paths:
-                        is_champion = False
-                    else:
-                        is_champion = True
+                if field.hash == cached_bin['IconSquare']:
+                    for char in allowed_chars:
+                        if len(field.data.lower().split(char)) > 1:
+                            is_champion = True
+                            break
+                if is_champion:
+                    break
                     
             if is_champion:
                 for HealthBarData in entry.data:
@@ -73,7 +75,6 @@ def parse_bin(bin_path, bin_file):
                             if(UnitHealthBarStyle.hash == cached_bin['UnitHealthBarStyle']):
                                 UnitHealthBarStyle.data = 12
                                 break  
-                    
         if entry.type == cached_bin['StaticMaterialDef']:
             for field in entry.data:
                 if field.hash == cached_bin['SamplerValues']:
@@ -92,6 +93,7 @@ def parse_bin(bin_path, bin_file):
                                 tPath = id
                             if value.hash == cached_bin['SamplerName']:
                                 sName = id
+                            
                         if tName != -1 and tPath != -1 and not tNameIsPath:
                             continue
                         elif tPath != -1 and sName != -1 and not tNameIsPath:

@@ -1,1 +1,1 @@
-pyinstaller --add-data "BannedPaths.txt;." MultiRitoFixes.py -F
+pyinstaller --add-data "AllowedChars.txt;." MultiRitoFixes.py -F
