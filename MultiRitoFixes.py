@@ -1,7 +1,3 @@
-# Source Generated with Decompyle++
-# File: script.pyc (Python 3.11)
-
-# Unsupported opcode: CHECK_EXC_MATCH (106)
 from io import BytesIO
 import sys
 from sys import argv
