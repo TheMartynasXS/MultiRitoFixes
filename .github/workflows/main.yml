@@ -30,4 +30,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Windows-exe
-          path: dist/windows.exe
+          path: dist/MultiRitoFixes.exe
