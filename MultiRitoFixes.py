@@ -26,7 +26,7 @@ def compute_hash(s: str):
         h = (h ^ b) * 0x01000193
     return f"{h & 0xffffffff:08x}"
 
-filesInWad = set()
+files_in_wad = set()
 class CACHED_BIN_HASHES(dict):
     def __getitem__(self, key):
         if key in self.keys():
@@ -104,7 +104,7 @@ def dds_to_tex(obj):
     if obj.lower().endswith(".dds"):
         pattern = re.compile(r"assets/(characters/[a-j])", re.IGNORECASE)
         check = (re.match(pattern, obj) != None)
-        if check and (not (xxh64(obj.lower()).hexdigest()  in filesInWad)):
+        if check and (not (xxh64(obj.lower()).hexdigest()  in files_in_wad)):
             ext = re.compile(r"\.dds$", re.IGNORECASE)
             print(f"Couldn't find {obj} in the wad renaming to .tex {xxh64(obj.lower()).hexdigest()}")
             obj = re.sub(ext, ".tex", obj)
@@ -143,11 +143,11 @@ def parse_wad(wad_path: str) -> bytes:
     chunks_dict = {}
 
     with wad_file.stream(wad_path, "rb+") as bs:
-        filesInWad.clear()
+        files_in_wad.clear()
         for chunk in wad_file.chunks:
             chunk.read_data(bs)
             if chunk.extension in ["dds", "tex"]:
-                filesInWad.add(chunk.hash)
+                files_in_wad.add(chunk.hash)
 
         for chunk in wad_file.chunks:
             chunk.read_data(bs)
@@ -221,7 +221,6 @@ def parse_fantome(fantome_path: str) -> None:
         final_zip_file.writestr(final_wad_name, final_wad_bytes)
     for extra_name, extra_byte in extra_files.items():
         final_zip_file.writestr(extra_name, extra_byte)
-        \
 
     
     zip_file.close()
@@ -230,22 +229,20 @@ def parse_fantome(fantome_path: str) -> None:
     with open(fantome_path, 'wb') as file:
         print(f"Writing Fantome: {fantome_path}")
         file.write(final_zip_buffer.getvalue())
- 
-if path.isfile(input_path) and input_path.endswith('.bin'):
-    # User are using a .bin file
+
+
+    
+if path.isfile(input_path) and input_path.endswith('.bin'): # input is a bin file
     try:
         bin_file = BIN()
         bin_file.read(input_path)
-        bin_file = parse_bin(input_path, bin_file)
-        print("Writing .bin file :D")
+        bin_file = parse_bin(input_path, bin_file, True)
         bin_file.write(input_path)
-        print("End of Script.")
     except Exception as e:
         print(e, '\nSomething went wrong')
         input()
 
-elif path.isfile(input_path) and input_path.endswith('.wad.client'):
-    # User are using a .wad file
+elif path.isfile(input_path) and input_path.endswith('.wad.client'): # input is a wad file
     try:
         print(f"Parsing Wad: {input_path}...")
         wad_bytes = parse_wad(input_path)
@@ -256,64 +253,55 @@ elif path.isfile(input_path) and input_path.endswith('.wad.client'):
         print(e, '\nSomething went wrong')
         input()
 
-elif path.isfile(input_path) and (input_path.endswith('.zip') or input_path.endswith('.fantome')):
-    # User are using a fantome
+elif path.isfile(input_path) or input_path.endswith('.fantome'): # input is a zip file
     try:
-        print(f"Parsing Fantome: {input_path}")
         parse_fantome(input_path)
-        print("End of Script.")
     except Exception as e:
         print(e, '\nSomething went wrong')
         input()
 
-elif path.isdir(input_path):
-    # User are using a dir
+elif path.isdir(input_path): # input is a directory
     from os import walk
-    found_bins = []
-    found_wads = []
-    found_fantomes = []
-    print("Searching for Wads and Bins and Fantomes/Zips inside the desired folder.")
-    
+    bin_files = []
+    wad_files = []
+    fantome_files = []
+    is_wad_folder = False
+
     for root, dirs, files in walk(input_path):
         for file in files:
-            if file.lower().endswith('.bin'):
-                found_bins.append(path.join(root, file))
-            elif file.lower().endswith('.wad.client'):
-                found_wads.append(path.join(root, file))
-            elif file.lower().endswith('.fantome') or file.lower().endswith('.zip'):
-                found_fantomes.append(path.join(root, file))
-    print(f'"Bins": {found_bins}\n"Wads": {found_wads}\n"Fantomes": {found_fantomes}\n')
+            temp = file.lower()
+            if temp.endswith('.bin'):
+                bin_files.append(path.join(root, temp))
+            elif temp.endswith('.wad.client'):
+                wad_files.append(path.join(root, temp))
+            elif temp.endswith('.zip') or temp.endswith('.fantome'):
+                fantome_files.append(path.join(root, temp))
+            elif temp.endswith('.dds') or temp.endswith('.tex'):
+                full_path = path.join(root, temp)
+                reduced = full_path[len(input_path)+1:]
+                files_in_wad.add(xxh64(reduced).hexdigest())
     
-    for bin_path in found_bins:
-        try:
-            print(f"Parsing Bin: {bin_path}...")
-            bin_file = BIN()
-            bin_file.read(bin_path)
-            parse_bin(bin_file)
-            print("Writing .bin file :D")
-            bin_file.write(bin_path)
-        except Exception:
-            print(f"{bin_path} THROWN AN EXCEPTION")
     
-    for wad_path in found_wads:
-        try:
-            print(f"Parsing Wad: {wad_path}...")
-            wad_bytes = parse_wad(wad_path)
-            print("Writing .wad file :D")
-            with open(wad_path, 'wb') as f:
-                f.write(wad_bytes)
-        except Exception:
-            print(f"{wad_path} THROWN AN EXCEPTION")
+    if len(wad_files) == 0 and len(fantome_files) == 0 and len(bin_files) != 0:
+        for file_path in bin_files:
+            try:
+                bin_file = BIN()
+                bin_file.read(file_path)
+                bin_file = parse_bin(file_path, bin_file, False)
+                bin_file.write(file_path)
+            except Exception as e:
+                print(e, '\nSomething went wrong')
+                input()
+        pass
+    
+    
+    for file_path in wad_files:
+        wad_bytes = parse_wad(file_path)
 
-    for fantome_path in found_fantomes:
-        try:
-            print(f"Parsing Fantome: {fantome_path}")
-            parse_fantome(fantome_path)
-        except Exception:
-            print(f"{fantome_path} THROWN AN EXCEPTION")
-
-    print("End of Script.")
-
+    for file_path in fantome_files:
+        parse_fantome(file_path)
+    
+    
 else:
     print("Couldn't guess the desired object to fix")
     input()

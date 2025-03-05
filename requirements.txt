@@ -1,0 +1,2 @@
+pyritofile==0.2.2
+xxhash==3.5.0
