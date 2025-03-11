@@ -35,7 +35,7 @@ class CACHED_BIN_HASHES(dict):
             super().__setitem__(key, compute_hash(key))
             return super().__getitem__(key)
 
-# read from included txt file in pyinstaller with --add-data 'BannedPaths.txt;.'
+# read from included txt file in pyinstaller with --add-data 'AllowedChars.txt;.'
 allowed_chars = []
 if getattr(sys, 'frozen', False):
     allowed_chars = path.join(sys._MEIPASS, 'AllowedChars.txt')
@@ -47,6 +47,7 @@ if path.exists(allowed_chars):
         allowed_chars = [line.strip() for line in file.readlines()]
 cached_bin = CACHED_BIN_HASHES()
 input_path = argv[1]
+
 def parse_bin(bin_path, bin_file, is_standalone=False):
     for entry in bin_file.entries:
         if entry.type == cached_bin['SkinCharacterDataProperties']:
@@ -54,7 +55,7 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
             for field in entry.data:
                 if field.hash == cached_bin['IconSquare']:
                     for char in allowed_chars:
-                        if len(field.data.lower().split(char)) > 1:
+                        if len(field.data.lower().split(f"/{char}/")) > 1:
                             is_champion = True
                             break
                 if is_champion:
@@ -93,27 +94,35 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
                         elif tName != -1 and sName != -1 and tNameIsPath:
                             sampler_def.data[tName].hash = cached_bin['TexturePath']
                             sampler_def.data[sName].hash = cached_bin['TextureName']
-    for entry in bin_file.entries:
-        if entry.type != cached_bin['ResourceResolver'] and (not(is_standalone)):
+    if not(is_standalone):
+        for entry in bin_file.entries:
+            if entry.type == cached_bin['SpellObject'] or entry.type == cached_bin['ResourceResolver']:
+                continue
             for item in entry.data:
                 item.data = traverse_bin(item.data)             
     return bin_file
 
 bin_assets = set()
-def dds_to_tex(obj):
+def rename(obj):
+    pattern = re.compile(r"assets/(characters/[a-j])", re.IGNORECASE)
+    is_affected_asset = (re.match(pattern, obj) != None)
     if obj.lower().endswith(".dds"):
-        pattern = re.compile(r"assets/(characters/[a-j])", re.IGNORECASE)
-        check = (re.match(pattern, obj) != None)
-        if check and (not (xxh64(obj.lower()).hexdigest()  in files_in_wad)):
+        if is_affected_asset and (not (xxh64(obj.lower()).hexdigest()  in files_in_wad)):
             ext = re.compile(r"\.dds$", re.IGNORECASE)
             print(f"Couldn't find {obj} in the wad renaming to .tex {xxh64(obj.lower()).hexdigest()}")
             obj = re.sub(ext, ".tex", obj)
+    elif obj.lower().endswith(".tex") and (not (xxh64(obj.lower()).hexdigest()  in files_in_wad)):
+        ext = re.compile(r"\.tex$", re.IGNORECASE)
+        newobj = re.sub(ext, ".dds", obj)
+        if is_affected_asset and (xxh64(newobj.lower()).hexdigest() in files_in_wad):
+            print(f"Couldn't find {obj} in the wad renaming to .dds {xxh64(newobj.lower()).hexdigest()}")
+            obj = newobj
     return obj
 
 #recursively search for string type values
 def traverse_bin(obj):
     if isinstance(obj, str):
-        return dds_to_tex(obj)
+        return rename(obj)
 
     if isinstance(obj, list):
         for i in range(len(obj)):
@@ -122,7 +131,7 @@ def traverse_bin(obj):
     
     if isinstance(obj, BINField):
         if obj.type == BINType.String:
-            obj.data = dds_to_tex(obj.data)
+            obj.data = rename(obj.data)
         elif obj.type == BINType.List:
             for i in range(len(obj.data)):
                 if hasattr(obj.data[i], 'data'):
@@ -144,6 +153,7 @@ def parse_wad(wad_path: str) -> bytes:
 
     with wad_file.stream(wad_path, "rb+") as bs:
         files_in_wad.clear()
+
         for chunk in wad_file.chunks:
             chunk.read_data(bs)
             if chunk.extension in ["dds", "tex"]:
@@ -246,14 +256,14 @@ elif path.isfile(input_path) and input_path.endswith('.wad.client'): # input is 
     try:
         print(f"Parsing Wad: {input_path}...")
         wad_bytes = parse_wad(input_path)
-        print("Writing .wad file :D")
+        print("Writing .wad file")
         with open(input_path, 'wb') as f:
             f.write(wad_bytes)
     except Exception as e:
         print(e, '\nSomething went wrong')
         input()
 
-elif path.isfile(input_path) or input_path.endswith('.fantome'): # input is a zip file
+elif path.isfile(input_path) and input_path.endswith('.fantome'): # input is a zip file
     try:
         parse_fantome(input_path)
     except Exception as e:
@@ -281,7 +291,6 @@ elif path.isdir(input_path): # input is a directory
                 reduced = full_path[len(input_path)+1:]
                 files_in_wad.add(xxh64(reduced).hexdigest())
     
-    
     if len(wad_files) == 0 and len(fantome_files) == 0 and len(bin_files) != 0:
         for file_path in bin_files:
             try:
@@ -293,13 +302,14 @@ elif path.isdir(input_path): # input is a directory
                 print(e, '\nSomething went wrong')
                 input()
         pass
-    
-    
-    for file_path in wad_files:
-        wad_bytes = parse_wad(file_path)
+    else:
+        for file_path in wad_files:
+            wad_bytes = parse_wad(file_path)
+            with open(file_path, 'wb') as f:
+                f.write(wad_bytes)
 
-    for file_path in fantome_files:
-        parse_fantome(file_path)
+        for file_path in fantome_files:
+            parse_fantome(file_path)
     
     
 else:
