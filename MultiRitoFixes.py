@@ -9,12 +9,12 @@ from pyritofile import BIN,WAD,WADChunk, BINField, BINType, BINEntry
 from pyritofile.structs import Vector, Matrix4
 import tempfile
 import json
+from urllib import request
 
 if len(argv) < 2:
     input('Do not run this program directly,\ndrag and drop file/folder on to the fixer')
     exit()
-else :
-    print(f"Running on: {argv[1]}")
+print(f"Running on: {argv[1]}")
 
 
 def compute_hash(s: str):
@@ -63,7 +63,7 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
                     
             if is_champion:
                 for HealthBarData in entry.data:
-                    if(HealthBarData.hash == cached_bin['HealthBarData']):
+                    if HealthBarData.hash == cached_bin['HealthBarData']:
                         for UnitHealthBarStyle in HealthBarData.data:
                             if(UnitHealthBarStyle.hash == cached_bin['UnitHealthBarStyle']):
                                 UnitHealthBarStyle.data = 12
@@ -143,33 +143,84 @@ def traverse_bin(obj):
 
     return obj
 
-
-
-
-def parse_wad(wad_path: str) -> bytes:
+def parse_wad(wad_path: str,wad_name: str) -> bytes:
     wad_file = WAD()
     wad_file.read(wad_path)
     chunks_dict = {}
 
+    wad_champion = None
+
     with wad_file.stream(wad_path, "rb+") as bs:
         files_in_wad.clear()
+        has_bin = False
+
+        champ_name = ""
+        skin_number = 0
+
+        for char in allowed_chars:
+            regex = re.compile(f"WAD/{char}", re.IGNORECASE)
+            if re.match(regex, wad_name) != None:
+                champ_name = char
+
 
         for chunk in wad_file.chunks:
             chunk.read_data(bs)
             if chunk.extension in ["dds", "tex"]:
                 files_in_wad.add(chunk.hash)
+                    
+            elif chunk.extension == "bin":
+                has_bin = True
+
+        pattern = re.compile(r"^[a-j]", re.IGNORECASE)
+        if (re.match(pattern, champ_name) != None):
+            if skin_number == 0:
+                for id in range(1,100):
+                    hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin{id}_tx_cm.dds").hexdigest()
+                    if hdds in files_in_wad:
+                        skin_number = id
+                        break
+            if skin_number == 0:
+                for id in range(1,10):
+                    hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin0{id}_tx_cm.dds").hexdigest()
+                    if hdds in files_in_wad:
+                        skin_number = id
+                        break
+
+            if not has_bin:
+                print(f"Assuming {champ_name} in {wad_name} with skin {skin_number}")
+                try:
+                    url = f"http://raw.communitydragon.org/latest/game/data/characters/{champ_name}/skins/skin0.bin"
+                    req = request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    tempbin = request.urlopen(req).read()
+
+                    bin_file = BIN()
+                    bin_file.read(path="", raw=tempbin)
+
+                    bin_chunk = WADChunk()  # Instantiate the chunk
+                    bin_chunk.write_data(
+                        bs,
+                        0,  # chunk_id
+                        xxh64(f"data/characters/{champ_name}/skins/skin{skin_number}.bin").hexdigest(),  # chunk_hash
+                        bin_file.write(path="", raw=True),  # chunk_data
+                        previous_chunks=(wad_file.chunks[i] for i in range(len(wad_file.chunks)))
+                    )
+                    bin_chunk.extension = "bin"
+                    wad_file.chunks.append(bin_chunk)
+                    print(f"Downloaded {champ_name} skin0.bin from communitydragon")
+                except Exception as e:
+                    print(f"Couldn't download {champ_name} skin0.bin from {url}\n{e}")
 
         for chunk in wad_file.chunks:
             chunk.read_data(bs)
             if chunk.extension == "bin":
                 try:
+                    print(f"Fixing {chunk.hash}")
                     bin_file = BIN()
                     bin_file.read(path="", raw=chunk.data)
                     bin_file = parse_bin(chunk.hash, bin_file)
                     chunk.data = bin_file.write(path="", raw=True)
-                except Exception:
-                    print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION')
-
+                except Exception as e:
+                    print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
             chunks_dict[chunk.hash] = chunk.data
 
     wad = WAD()
@@ -221,8 +272,8 @@ def parse_fantome(fantome_path: str) -> None:
     for wad_name, wad_bytes in wads_dict.items():
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wad.client") as tmp_file:
             tmp_file.write(wad_bytes)
-            tmp_file.flush()
-            final_wads_dict[wad_name] = parse_wad(tmp_file.name)
+            tmp_file.flush() 
+            final_wads_dict[wad_name] = parse_wad(tmp_file.name, wad_name)
 
     final_zip_buffer = BytesIO()
     final_zip_file = ZipFile(final_zip_buffer, 'w', ZIP_DEFLATED, False)
@@ -239,8 +290,6 @@ def parse_fantome(fantome_path: str) -> None:
     with open(fantome_path, 'wb') as file:
         print(f"Writing Fantome: {fantome_path}")
         file.write(final_zip_buffer.getvalue())
-
-
     
 if path.isfile(input_path) and input_path.endswith('.bin'): # input is a bin file
     try:
@@ -313,5 +362,5 @@ elif path.isdir(input_path): # input is a directory
     
     
 else:
-    print("Couldn't guess the desired object to fix")
+    print("Couldn't find any files to fix")
     input()
