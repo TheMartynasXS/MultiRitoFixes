@@ -158,7 +158,7 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
         skin_number = 0
 
         for char in allowed_chars:
-            regex = re.compile(f"WAD/{char}", re.IGNORECASE)
+            regex = re.compile(f"(WAD/)?{char}", re.IGNORECASE)
             if re.match(regex, wad_name) != None:
                 champ_name = char
 
@@ -304,7 +304,8 @@ if path.isfile(input_path) and input_path.endswith('.bin'): # input is a bin fil
 elif path.isfile(input_path) and input_path.endswith('.wad.client'): # input is a wad file
     try:
         print(f"Parsing Wad: {input_path}...")
-        wad_bytes = parse_wad(input_path)
+        print(path.join("WAD",path.basename(input_path)))
+        wad_bytes = parse_wad(input_path, path.basename(input_path))
         print("Writing .wad file")
         with open(input_path, 'wb') as f:
             f.write(wad_bytes)
