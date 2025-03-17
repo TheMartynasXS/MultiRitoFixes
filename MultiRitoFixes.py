@@ -354,7 +354,7 @@ elif path.isdir(input_path): # input is a directory
         pass
     else:
         for file_path in wad_files:
-            wad_bytes = parse_wad(file_path)
+            wad_bytes = parse_wad(file_path, path.basename(file_path))
             with open(file_path, 'wb') as f:
                 f.write(wad_bytes)
 
