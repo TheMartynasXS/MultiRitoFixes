@@ -158,8 +158,9 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
         skin_number = 0
 
         for char in allowed_chars:
-            regex = re.compile(f"(WAD/)?{char}", re.IGNORECASE)
+            regex = re.compile(f"(WAD/)?{char}\.wad.client", re.IGNORECASE)
             if re.match(regex, wad_name) != None:
+                print(f"Found {char} in {wad_name}")
                 champ_name = char
 
 
@@ -172,7 +173,7 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
                 has_bin = True
 
         pattern = re.compile(r"^[a-j]", re.IGNORECASE)
-        if (re.match(pattern, champ_name) != None):
+        if (re.match(pattern, champ_name) != None) and champ_name != "":
             if skin_number == 0:
                 for id in range(1,100):
                     hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin{id}_tx_cm.dds").hexdigest()
