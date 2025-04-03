@@ -190,7 +190,7 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
             if not has_bin:
                 print(f"Assuming {champ_name} in {wad_name} with skin {skin_number}")
                 try:
-                    url = f"http://raw.communitydragon.org/latest/game/data/characters/{champ_name}/skins/skin0.bin"
+                    url = f"http://raw.communitydragon.org/latest/game/data/characters/{champ_name}/skins/skin{skin_number}.bin"
                     req = request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                     tempbin = request.urlopen(req).read()
 
