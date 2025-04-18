@@ -202,32 +202,38 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
                 champ_name = char
         
         failed_conversion = False
+        
+        pattern = re.compile(r"^[a-m]", re.IGNORECASE)
         #! convert dds to tex
-        for chunk in wad_file.chunks:
-            chunk.read_data(bs)
-            if chunk.extension == "dds":
-                try:
-                    newdata = stream2tex(chunk.data)
-                    newpath = hashes[chunk.hash].replace(".dds",".tex")
-                    newhash = xxh64(newpath).hexdigest()
-                    hashes[newhash] = newpath
-                    chunk.hash = newhash
-                    chunk.extension = "tex"
-                    chunk.data = newdata
-                    print(f'File Hash: "{chunk.hash}" FIXED')
+        if(re.match(pattern, champ_name) != None) and champ_name != "":
+            for chunk in wad_file.chunks:
+                chunk.read_data(bs)
+                if chunk.extension == "dds":
+                    try:
+                        newdata = stream2tex(chunk.data)
+                        newpath = hashes[chunk.hash].replace(".dds",".tex")
+                        newhash = xxh64(newpath).hexdigest()
+                        hashes[newhash] = newpath
+                        chunk.hash = newhash
+                        chunk.extension = "tex"
+                        chunk.data = newdata
+                        print(f'File Hash: "{chunk.hash}" FIXED')
+                        files_in_wad.add(chunk.hash)
+                    except Exception as e:
+                        print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
+                        files_in_wad.add(chunk.hash)
+                        failed_conversion = True
+                elif chunk.extension == "bin":
+                    # determine if the wad has a bin file
+                    has_bin = True
+                elif chunk.extension == "tex":
                     files_in_wad.add(chunk.hash)
-                except Exception as e:
-                    print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
+        else:
+            for chunk in wad_file.chunks:
+                if chunk.extension == "dds":
                     files_in_wad.add(chunk.hash)
-                    failed_conversion = True
-            elif chunk.extension == "bin":
-                # determine if the wad has a bin file
-                has_bin = True
-            elif chunk.extension == "tex":
-                files_in_wad.add(chunk.hash)
         
         #! if some dds files failed to convert, download bin file
-        pattern = re.compile(r"^[a-m]", re.IGNORECASE)
         if failed_conversion and (re.match(pattern, champ_name) != None) and champ_name != "":
             if skin_number == 0:
                 for id in range(1,100):
