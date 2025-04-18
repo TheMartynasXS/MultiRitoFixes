@@ -210,6 +210,11 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
                 chunk.read_data(bs)
                 if chunk.extension == "dds":
                     try:
+                        pattern_hud = re.compile(r"hud/icons2d")
+                        if re.match(pattern_hud, hashes[chunk.hash]) != None:
+                            files_in_wad.add(chunk.hash)
+                            continue
+                        
                         newdata = stream2tex(chunk.data)
                         newpath = hashes[chunk.hash].replace(".dds",".tex")
                         newhash = xxh64(newpath).hexdigest()
