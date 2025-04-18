@@ -12,6 +12,8 @@ import json
 from urllib import request
 from functions import stream2tex 
 
+from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, TimeElapsedColumn
+
 import time
 # check if process called "cslol-manager.exe" is running
 import psutil
@@ -141,43 +143,48 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
 
 
 def rename(obj):
+    obj = obj.lower()
     pattern = re.compile(r"assets/(characters/[a-m])", re.IGNORECASE)
     is_affected_asset = (re.match(pattern, obj) != None)
-    if obj.lower().endswith(".dds"):
-        if is_affected_asset and (not (xxh64(obj.lower()).hexdigest()  in files_in_wad)):
+    if obj.endswith(".dds"):
+        if is_affected_asset and (not (xxh64(obj).hexdigest()  in files_in_wad)):
             ext = re.compile(r"\.dds$", re.IGNORECASE)
-            print(f"Couldn't find {obj} in the wad renaming to .tex {xxh64(obj.lower()).hexdigest()}")
+            # print(f"Couldn't find {obj} in the wad renaming to .tex {xxh64(obj).hexdigest()}")
             obj = re.sub(ext, ".tex", obj)
-    elif obj.lower().endswith(".tex") and (not (xxh64(obj.lower()).hexdigest()  in files_in_wad)):
+    elif obj.endswith(".tex") and (not (xxh64(obj).hexdigest()  in files_in_wad)):
         ext = re.compile(r"\.tex$", re.IGNORECASE)
         newobj = re.sub(ext, ".dds", obj)
-        if is_affected_asset and (xxh64(newobj.lower()).hexdigest() in files_in_wad):
-            print(f"Couldn't find {obj} in the wad renaming to .dds {xxh64(newobj.lower()).hexdigest()}")
+        if is_affected_asset and (xxh64(newobj).hexdigest() in files_in_wad):
+            # print(f"Couldn't find {obj} in the wad renaming to .dds {xxh64(newobj).hexdigest()}")
             obj = newobj
     return obj
 
+def find_missing_hashes(obj):
+    obj = obj.lower()
+    if xxh64(obj).hexdigest() not in hashes and obj.find(".") != -1:
+        hashes[xxh64(obj).hexdigest()] = obj
+    return obj
 #recursively search for string type values
-def traverse_bin(obj):
+def traverse_bin(obj, function=rename):
     if isinstance(obj, str):
-        return rename(obj)
+        return function(obj)
 
     if isinstance(obj, list):
         for i in range(len(obj)):
-            obj[i] = traverse_bin(obj[i])
+            obj[i] = traverse_bin(obj[i], function)
         return obj
     
     if isinstance(obj, BINField):
         if obj.type == BINType.String:
-            obj.data = rename(obj.data)
+            obj.data = function(obj.data)
         elif obj.type == BINType.List:
             for i in range(len(obj.data)):
                 if hasattr(obj.data[i], 'data'):
-                    obj.data[i].data = traverse_bin(obj.data[i].data)
+                    obj.data[i].data = traverse_bin(obj.data[i].data, function)
                 else:
-                    obj.data[i] = traverse_bin(obj.data[i])
+                    obj.data[i] = traverse_bin(obj.data[i], function)
         elif obj.type in (BINType.List2, BINType.Embed, BINType.Pointer):
-            obj.data = traverse_bin(obj.data)
-
+            obj.data = traverse_bin(obj.data, function)
     return obj
 
 def parse_wad(wad_path: str,wad_name: str) -> bytes:
@@ -193,7 +200,16 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
 
         champ_name = ""
         skin_number = 0
-
+        
+        for chunk in wad_file.chunks:
+            chunk.read_data(bs)
+            if chunk.extension == "bin":
+                bin_file = BIN()
+                bin_file.read(path="", raw=chunk.data)
+                for entry in bin_file.entries:
+                    for item in entry.data:
+                        traverse_bin(item.data, find_missing_hashes)
+        
         # determine the champion name
         for char in allowed_chars:
             regex = re.compile(f"(WAD/)?{char}\.wad.client", re.IGNORECASE)
@@ -213,8 +229,8 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
                     try:
                         if hashes[chunk.hash].startswith("2x") or hashes[chunk.hash].startswith("4x"):
                             continue
-                        pattern_hud = re.compile(r"hud/icons2d")
-                        if re.match(pattern_hud, hashes[chunk.hash]) != None:
+                        
+                        if "hud/icons2d" in hashes[chunk.hash]:
                             files_in_wad.add(chunk.hash)
                             continue
                         
@@ -225,7 +241,6 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
                         chunk.hash = newhash
                         chunk.extension = "tex"
                         chunk.data = newdata
-                        print(f'File Hash: "{chunk.hash}" FIXED')
                         files_in_wad.add(chunk.hash)
                     except Exception as e:
                         print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
@@ -284,14 +299,12 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
         for chunk in wad_file.chunks:
             if chunk.extension == "bnk" and champ_name != "":
                 try:
-                    bnk_pattern = re.compile(r".*?(/|\)sfx_events.bnk", re.IGNORECASE)
-                    if re.match(bnk_pattern, hashes[chunk.hash]) != None:
+                    if hashes[chunk.hash].endswith("sfx_events.bnk"):
                         chunk.hash = hashes[chunk.hash].replace("sfx_events.bnk", f"sfx_events.old.bnk")
                 except Exception as e:
                     print(f'File Hash: "{chunk.hash}" bnk could not be fixed {e}')
             elif chunk.extension == "bin":
                 try:
-                    print(f"Fixing {chunk.hash}")
                     bin_file = BIN()
                     bin_file.read(path="", raw=chunk.data)
                     bin_file = parse_bin(chunk.hash, bin_file)
@@ -435,13 +448,34 @@ elif path.isdir(input_path): # input is a directory
                 input()
         pass
     else:
-        for file_path in wad_files:
-            wad_bytes = parse_wad(file_path, path.basename(file_path))
-            with open(file_path, 'wb') as f:
-                f.write(wad_bytes)
-
-        for file_path in fantome_files:
-            parse_fantome(file_path)
+        count = len(wad_files) + len(fantome_files)
+        print(f"Processing {len(wad_files)} wad files and {len(fantome_files)} fantome files")
+        
+        # Create a Rich progress bar
+        with Progress(
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+        ) as progress:
+            task = progress.add_task("[cyan]Processing files...", total=count)
+            
+            for file_path in wad_files:
+                metadata = path.join(path.dirname(file_path), "../META/info.json")
+                if path.exists(metadata):
+                    with open(metadata, 'r') as f:
+                        data = json.load(f)
+                        print(f"Processing {data['Name']} by {data['Author']}")
+                
+                wad_bytes = parse_wad(file_path, path.basename(file_path))
+                with open(file_path, 'wb') as f:
+                    f.write(wad_bytes)
+                progress.update(task, advance=1)
+            
+            for file_path in fantome_files:
+                parse_fantome(file_path)
+                progress.update(task, advance=1)
     
     if cslol_path != "":
         import subprocess

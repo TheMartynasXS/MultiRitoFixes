@@ -75,7 +75,6 @@ def stream2tex(chunk_data):
     dxt1_code = int('DXT1'.encode('ascii')[::-1].hex(), 16)
     dxt5_code = int('DXT5'.encode('ascii')[::-1].hex(), 16)
     dxt3_code = int('DXT3'.encode('ascii')[::-1].hex(), 16)
-    print(f"dxt1: {dxt1_code} dxt5: {dxt5_code} dxt3: {dxt3_code}")
     if dds_pixel_format['dwFourCC'] == dxt1_code:
         tex_format = TEXFormat.DXT1
     elif dds_pixel_format['dwFourCC'] == dxt5_code:
