@@ -209,7 +209,10 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
             for chunk in wad_file.chunks:
                 chunk.read_data(bs)
                 if chunk.extension == "dds":
+                    
                     try:
+                        if hashes[chunk.hash].startswith("2x") or hashes[chunk.hash].startswith("4x"):
+                            continue
                         pattern_hud = re.compile(r"hud/icons2d")
                         if re.match(pattern_hud, hashes[chunk.hash]) != None:
                             files_in_wad.add(chunk.hash)
@@ -345,13 +348,10 @@ def parse_fantome(fantome_path: str) -> None:
     # Reuse parse_wad by writing the WAD bytes to a temp file
     
     for wad_name, wad_bytes in wads_dict.items():
-        with tempfile.NamedTemporaryFile(delete=True, delete_on_close=True, suffix=".wad.client") as tmp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wad.client") as tmp_file:
             tmp_file.write(wad_bytes)
             tmp_file.flush() 
             final_wads_dict[wad_name] = parse_wad(tmp_file.name, wad_name)
-            tmp_file.close()
-        # make sure the file is deleted
-        os.remove(tmp_file.name)
 
     final_zip_buffer = BytesIO()
     final_zip_file = ZipFile(final_zip_buffer, 'w', ZIP_DEFLATED, False)
@@ -391,7 +391,7 @@ elif path.isfile(input_path) and input_path.endswith('.wad.client'): # input is 
         print(e, '\nSomething went wrong')
         input()
 
-elif path.isfile(input_path) and input_path.endswith('.fantome'): # input is a zip file
+elif path.isfile(input_path) and (input_path.endswith('.fantome') or input_path.endswith('.zip')): # input is a zip file
     try:
         parse_fantome(input_path)
     except Exception as e:

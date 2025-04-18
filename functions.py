@@ -60,7 +60,6 @@ def stream2tex(chunk_data):
         'dwCaps': dwCaps,
         'dwCaps2': dwCaps2,
     }
-    
     # DDS pixel format
     dds_pixel_format = dds_header['ddspf']
     
@@ -75,11 +74,14 @@ def stream2tex(chunk_data):
     # Check format based on FourCC or flags
     dxt1_code = int('DXT1'.encode('ascii')[::-1].hex(), 16)
     dxt5_code = int('DXT5'.encode('ascii')[::-1].hex(), 16)
-    
+    dxt3_code = int('DXT3'.encode('ascii')[::-1].hex(), 16)
+    print(f"dxt1: {dxt1_code} dxt5: {dxt5_code} dxt3: {dxt3_code}")
     if dds_pixel_format['dwFourCC'] == dxt1_code:
         tex_format = TEXFormat.DXT1
     elif dds_pixel_format['dwFourCC'] == dxt5_code:
         tex_format = TEXFormat.DXT5
+    elif dds_pixel_format['dwFourCC'] == dxt3_code:
+        tex_format = TEXFormat.DXT1_
     elif (dds_pixel_format['dwFlags'] & 0x00000041) == 0x00000041:
         if (dds_pixel_format['dwRGBBitCount'] != 32 or 
             dds_pixel_format['dwRBitMask'] != 0x000000ff or 
@@ -89,6 +91,8 @@ def stream2tex(chunk_data):
             raise Exception('Ritoddstex: Failed: stream2tex: DDS file is not in exact RGBA8 format.')
         tex_format = TEXFormat.RGBA8
     else:
+        print(f"other: {TEXFormat.DXT1} {TEXFormat.DXT5}")
+        print(f"pixel format: {dds_pixel_format['dwFourCC']}")
         raise Exception(f'Ritoddstex: Failed: stream2tex: Unsupported DDS format: {dds_pixel_format["dwFourCC"]}')
     
     # Check for mipmaps

@@ -4,3 +4,4 @@ build
 latest.py
 test.py
 hashes.game.txt
+__pycache__
