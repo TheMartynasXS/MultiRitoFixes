@@ -1,1 +1,1 @@
-pyinstaller --add-data "AllowedChars.txt;." MultiRitoFixes.py -F
+pyinstaller MultiRitoFixes.spec

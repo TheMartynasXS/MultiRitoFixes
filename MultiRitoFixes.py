@@ -10,12 +10,37 @@ from pyritofile.structs import Vector, Matrix4
 import tempfile
 import json
 from urllib import request
+from functions import stream2tex 
+
+import time
+# check if process called "cslol-manager.exe" is running
+import psutil
+
+def wait_ps(process_name, kill=False):
+    #check if process is running
+    running = False
+    p_path = ""
+    
+    for proc in psutil.process_iter(['name']):
+        if proc.info['name'] == process_name:
+            running = True
+            p_path = proc.exe()
+            if kill:
+                proc.kill()
+                while proc.is_running():
+                    time.sleep(1)
+                print(f"{process_name} is closed")
+            break
+    return p_path
+
 
 if len(argv) < 2:
     input('Do not run this program directly,\ndrag and drop file/folder on to the fixer')
     exit()
 print(f"Running on: {argv[1]}")
 
+input_path = argv[1]
+cslol_path = ""
 
 def compute_hash(s: str):
     if s.startswith("0x"):
@@ -34,19 +59,31 @@ class CACHED_BIN_HASHES(dict):
         else:
             super().__setitem__(key, compute_hash(key))
             return super().__getitem__(key)
-
-# read from included txt file in pyinstaller with --add-data 'AllowedChars.txt;.'
-allowed_chars = []
-if getattr(sys, 'frozen', False):
-    allowed_chars = path.join(sys._MEIPASS, 'AllowedChars.txt')
-else:
-    allowed_chars = 'AllowedChars.txt'
-
-if path.exists(allowed_chars):
-    with open(allowed_chars, 'r') as file:
-        allowed_chars = [line.strip() for line in file.readlines()]
 cached_bin = CACHED_BIN_HASHES()
-input_path = argv[1]
+
+
+allowed_chars_path = None
+hashes_path = None
+allowed_chars = []
+hashes = dict()
+
+if getattr(sys, 'frozen', False):
+    allowed_chars_path = path.join(sys._MEIPASS, 'AllowedChars.txt')
+    hashes_path = path.join(sys._MEIPASS, 'hashes.game.txt')
+else:
+    allowed_chars_path = 'AllowedChars.txt'
+    hashes_path = 'hashes.game.txt'
+
+if path.exists(allowed_chars_path) and allowed_chars_path != None:
+    with open(allowed_chars_path, 'r') as file:
+        allowed_chars = [line.strip() for line in file.readlines()]
+        
+if path.exists(hashes_path) and hashes_path != None:
+    with open(hashes_path, "r", encoding="utf-8") as file:
+        for line in file:
+            hash = line.split(" ")[0]
+            hashes[hash] = line.split(" ")[1].strip()
+
 
 def parse_bin(bin_path, bin_file, is_standalone=False):
     for entry in bin_file.entries:
@@ -102,7 +139,7 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
                 item.data = traverse_bin(item.data)             
     return bin_file
 
-bin_assets = set()
+
 def rename(obj):
     pattern = re.compile(r"assets/(characters/[a-m])", re.IGNORECASE)
     is_affected_asset = (re.match(pattern, obj) != None)
@@ -157,23 +194,41 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
         champ_name = ""
         skin_number = 0
 
+        # determine the champion name
         for char in allowed_chars:
             regex = re.compile(f"(WAD/)?{char}\.wad.client", re.IGNORECASE)
             if re.match(regex, wad_name) != None:
                 print(f"Found {char} in {wad_name}")
                 champ_name = char
-
-
+        
+        failed_conversion = False
+        #! convert dds to tex
         for chunk in wad_file.chunks:
             chunk.read_data(bs)
-            if chunk.extension in ["dds", "tex"]:
-                files_in_wad.add(chunk.hash)
-                    
+            if chunk.extension == "dds":
+                try:
+                    newdata = stream2tex(chunk.data)
+                    newpath = hashes[chunk.hash].replace(".dds",".tex")
+                    newhash = xxh64(newpath).hexdigest()
+                    hashes[newhash] = newpath
+                    chunk.hash = newhash
+                    chunk.extension = "tex"
+                    chunk.data = newdata
+                    print(f'File Hash: "{chunk.hash}" FIXED')
+                    files_in_wad.add(chunk.hash)
+                except Exception as e:
+                    print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
+                    files_in_wad.add(chunk.hash)
+                    failed_conversion = True
             elif chunk.extension == "bin":
+                # determine if the wad has a bin file
                 has_bin = True
-
+            elif chunk.extension == "tex":
+                files_in_wad.add(chunk.hash)
+        
+        #! if some dds files failed to convert, download bin file
         pattern = re.compile(r"^[a-m]", re.IGNORECASE)
-        if (re.match(pattern, champ_name) != None) and champ_name != "":
+        if failed_conversion and (re.match(pattern, champ_name) != None) and champ_name != "":
             if skin_number == 0:
                 for id in range(1,100):
                     hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin{id}_tx_cm.dds").hexdigest()
@@ -211,9 +266,16 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
                 except Exception as e:
                     print(f"Couldn't download {champ_name} skin0.bin from {url}\n{e}")
 
+        #! fix bin files and remap the remaining dds files
         for chunk in wad_file.chunks:
-            chunk.read_data(bs)
-            if chunk.extension == "bin":
+            if chunk.extension == "bnk" and champ_name != "":
+                try:
+                    bnk_pattern = re.compile(r".*?(/|\)sfx_events.bnk", re.IGNORECASE)
+                    if re.match(bnk_pattern, hashes[chunk.hash]) != None:
+                        chunk.hash = hashes[chunk.hash].replace("sfx_events.bnk", f"sfx_events.old.bnk")
+                except Exception as e:
+                    print(f'File Hash: "{chunk.hash}" bnk could not be fixed {e}')
+            elif chunk.extension == "bin":
                 try:
                     print(f"Fixing {chunk.hash}")
                     bin_file = BIN()
@@ -270,11 +332,15 @@ def parse_fantome(fantome_path: str) -> None:
                         print(f'Fixing "{Name}" by "{author}"')
 
     # Reuse parse_wad by writing the WAD bytes to a temp file
+    
     for wad_name, wad_bytes in wads_dict.items():
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wad.client") as tmp_file:
+        with tempfile.NamedTemporaryFile(delete=True, delete_on_close=True, suffix=".wad.client") as tmp_file:
             tmp_file.write(wad_bytes)
             tmp_file.flush() 
             final_wads_dict[wad_name] = parse_wad(tmp_file.name, wad_name)
+            tmp_file.close()
+        # make sure the file is deleted
+        os.remove(tmp_file.name)
 
     final_zip_buffer = BytesIO()
     final_zip_file = ZipFile(final_zip_buffer, 'w', ZIP_DEFLATED, False)
@@ -327,6 +393,10 @@ elif path.isdir(input_path): # input is a directory
     wad_files = []
     fantome_files = []
     is_wad_folder = False
+    
+    #if input_path is a folder named "installed"
+    if path.basename(input_path) == "installed":
+        cslol_path = wait_ps("cslol-manager.exe", True)
 
     for root, dirs, files in walk(input_path):
         for file in files:
@@ -362,6 +432,9 @@ elif path.isdir(input_path): # input is a directory
         for file_path in fantome_files:
             parse_fantome(file_path)
     
+    if cslol_path != "":
+        import subprocess
+        subprocess.Popen(cslol_path)
     
 else:
     print("Couldn't find any files to fix")
