@@ -1,5 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 
+# Get version from environment variable if set, otherwise use a default
+version = os.environ.get('VERSION', '1.2.0')
+name = f'MultiRitoFixes-v{version}'
 
 a = Analysis(
     ['MultiRitoFixes.py'],
@@ -22,7 +26,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='MultiRitoFixes',
+    name=name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

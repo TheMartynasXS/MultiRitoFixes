@@ -18,6 +18,7 @@ import time
 # check if process called "cslol-manager.exe" is running
 import psutil
 
+
 def wait_ps(process_name, kill=False):
     #check if process is running
     running = False
@@ -52,6 +53,7 @@ def compute_hash(s: str):
     for b in s.encode('ascii').lower():
         h = (h ^ b) * 0x01000193
     return f"{h & 0xffffffff:08x}"
+
 
 files_in_wad = set()
 class CACHED_BIN_HASHES(dict):
@@ -144,7 +146,7 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
 
 def rename(obj):
     obj = obj.lower()
-    pattern = re.compile(r"assets/(characters/[a-m])", re.IGNORECASE)
+    pattern = re.compile(r"assets/(characters/[a-r])", re.IGNORECASE)
     is_affected_asset = (re.match(pattern, obj) != None)
     if obj.endswith(".dds"):
         if is_affected_asset and (not (xxh64(obj).hexdigest()  in files_in_wad)):
@@ -187,7 +189,7 @@ def traverse_bin(obj, function=rename):
             obj.data = traverse_bin(obj.data, function)
     return obj
 
-def parse_wad(wad_path: str,wad_name: str) -> bytes:
+def parse_wad(wad_path: str,wad_name: str,standalone=False) -> bytes:
     wad_file = WAD()
     wad_file.read(wad_path)
     chunks_dict = {}
@@ -219,7 +221,9 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
         
         failed_conversion = False
         
-        pattern = re.compile(r"^[a-m]", re.IGNORECASE)
+        pattern = re.compile(r"^[a-r]", re.IGNORECASE)
+        
+        asset_pattern = re.compile(r"assets/(characters/[a-r])", re.IGNORECASE)
         #! convert dds to tex
         if(re.match(pattern, champ_name) != None) and champ_name != "":
             for chunk in wad_file.chunks:
@@ -227,10 +231,13 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
                 if chunk.extension == "dds":
                     
                     try:
-                        if hashes[chunk.hash].startswith("2x") or hashes[chunk.hash].startswith("4x"):
+                        if hashes[chunk.hash].split("/")[-1].startswith("2x") or hashes[chunk.hash].split("/")[-1].startswith("4x"):
                             continue
                         
                         if "hud/icons2d" in hashes[chunk.hash]:
+                            files_in_wad.add(chunk.hash)
+                            continue
+                        if re.match(asset_pattern, hashes[chunk.hash]) == None:
                             files_in_wad.add(chunk.hash)
                             continue
                         
@@ -256,45 +263,6 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
                 if chunk.extension == "dds":
                     files_in_wad.add(chunk.hash)
         
-        #! if some dds files failed to convert, download bin file
-        if failed_conversion and (re.match(pattern, champ_name) != None) and champ_name != "":
-            if skin_number == 0:
-                for id in range(1,100):
-                    hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin{id}_tx_cm.dds").hexdigest()
-                    if hdds in files_in_wad:
-                        skin_number = id
-                        break
-            if skin_number == 0:
-                for id in range(1,10):
-                    hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin0{id}_tx_cm.dds").hexdigest()
-                    if hdds in files_in_wad:
-                        skin_number = id
-                        break
-
-            if not has_bin:
-                print(f"Assuming {champ_name} in {wad_name} with skin {skin_number}")
-                try:
-                    url = f"http://raw.communitydragon.org/latest/game/data/characters/{champ_name}/skins/skin{skin_number}.bin"
-                    req = request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                    tempbin = request.urlopen(req).read()
-
-                    bin_file = BIN()
-                    bin_file.read(path="", raw=tempbin)
-
-                    bin_chunk = WADChunk()  # Instantiate the chunk
-                    bin_chunk.write_data(
-                        bs,
-                        0,  # chunk_id
-                        xxh64(f"data/characters/{champ_name}/skins/skin{skin_number}.bin").hexdigest(),  # chunk_hash
-                        bin_file.write(path="", raw=True),  # chunk_data
-                        previous_chunks=(wad_file.chunks[i] for i in range(len(wad_file.chunks)))
-                    )
-                    bin_chunk.extension = "bin"
-                    wad_file.chunks.append(bin_chunk)
-                    print(f"Downloaded {champ_name} skin0.bin from communitydragon")
-                except Exception as e:
-                    print(f"Couldn't download {champ_name} skin0.bin from {url}\n{e}")
-
         #! fix bin files and remap the remaining dds files
         for chunk in wad_file.chunks:
             if chunk.extension == "bnk" and champ_name != "":
@@ -396,7 +364,7 @@ elif path.isfile(input_path) and input_path.endswith('.wad.client'): # input is 
     try:
         print(f"Parsing Wad: {input_path}...")
         print(path.join("WAD",path.basename(input_path)))
-        wad_bytes = parse_wad(input_path, path.basename(input_path))
+        wad_bytes = parse_wad(input_path, path.basename(input_path),True)
         print("Writing .wad file")
         with open(input_path, 'wb') as f:
             f.write(wad_bytes)
