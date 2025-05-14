@@ -103,12 +103,49 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
                     break
                     
             if is_champion:
+                has_hp_bar = False
+                has_hp_style = False
+                UnitHealthBarStyle = BINField()
+                UnitHealthBarStyle.hash = cached_bin['UnitHealthBarStyle']
+                UnitHealthBarStyle.type = BINType.U8
+                UnitHealthBarStyle.data = 12
+                
                 for HealthBarData in entry.data:
                     if HealthBarData.hash == cached_bin['HealthBarData']:
-                        for UnitHealthBarStyle in HealthBarData.data:
-                            if(UnitHealthBarStyle.hash == cached_bin['UnitHealthBarStyle']):
-                                UnitHealthBarStyle.data = 12
-                                break  
+                        has_hp_bar = True
+                        new_data = []
+                        
+                        for field in HealthBarData.data:
+                            if field.hash == cached_bin['UnitHealthBarStyle']:
+                                has_hp_style = True
+                                field.data = 12
+                            if any(field.hash == data.hash for data in new_data):
+                                continue
+                            else:
+                                new_data.append(field)
+                        if has_hp_style:
+                            HealthBarData.data = new_data
+                        else:
+                            HealthBarData.data.append(UnitHealthBarStyle)
+                            
+                if has_hp_bar == False:
+                    HealthBarData = BINField()
+                    HealthBarData.hash = cached_bin['HealthBarData']
+                    HealthBarData.type = BINType.Embed
+                    HealthBarData.hash_type = cached_bin['CharacterHealthBarDataRecord']
+                    HealthBarData.data = [UnitHealthBarStyle]
+                    entry.data.append(HealthBarData)
+                            
+                
+                # for HealthBarData in entry.data:
+                #     if HealthBarData.hash == cached_bin['HealthBarData']:
+                #         has_hp_style = True
+                        
+                #         HealthBarData.data = [UnitHealthBarStyle]
+                # if has_hp_style == False:
+                #     
+                            
+                            
         if entry.type == cached_bin['StaticMaterialDef']:
             for field in entry.data:
                 if field.hash == cached_bin['SamplerValues']:
@@ -135,6 +172,7 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
                         elif tName != -1 and sName != -1 and tNameIsPath:
                             sampler_def.data[tName].hash = cached_bin['TexturePath']
                             sampler_def.data[sName].hash = cached_bin['TextureName']
+                            
     if not(is_standalone):
         for entry in bin_file.entries:
             if entry.type == cached_bin['SpellObject'] or entry.type == cached_bin['ResourceResolver']:
@@ -189,7 +227,7 @@ def traverse_bin(obj, function=rename):
             obj.data = traverse_bin(obj.data, function)
     return obj
 
-def parse_wad(wad_path: str,wad_name: str,standalone=False) -> bytes:
+def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
     wad_file = WAD()
     wad_file.read(wad_path)
     chunks_dict = {}
@@ -203,99 +241,197 @@ def parse_wad(wad_path: str,wad_name: str,standalone=False) -> bytes:
         champ_name = ""
         skin_number = 0
         
-        for chunk in wad_file.chunks:
-            chunk.read_data(bs)
-            if chunk.extension == "bin":
-                bin_file = BIN()
-                bin_file.read(path="", raw=chunk.data)
-                for entry in bin_file.entries:
-                    for item in entry.data:
-                        traverse_bin(item.data, find_missing_hashes)
-        
-        # determine the champion name
-        for char in allowed_chars:
-            regex = re.compile(f"(WAD/)?{char}\.wad.client", re.IGNORECASE)
-            if re.match(regex, wad_name) != None:
-                print(f"Found {char} in {wad_name}")
-                champ_name = char
-        
+        # Initialize inside the stream context
+        pattern = re.compile(r"^[a-r]", re.IGNORECASE)
+        asset_pattern = re.compile(r"assets/(characters/[a-r])", re.IGNORECASE)
         failed_conversion = False
         
-        pattern = re.compile(r"^[a-r]", re.IGNORECASE)
-        
-        asset_pattern = re.compile(r"assets/(characters/[a-r])", re.IGNORECASE)
-        #! convert dds to tex
-        if(re.match(pattern, champ_name) != None) and champ_name != "":
+        # Inner function to find hash data
+        def find_hash_data():
+            nonlocal champ_name
+            # Collect hash data from bin files
             for chunk in wad_file.chunks:
                 chunk.read_data(bs)
-                if chunk.extension == "dds":
-                    
-                    try:
-                        if hashes[chunk.hash].split("/")[-1].startswith("2x") or hashes[chunk.hash].split("/")[-1].startswith("4x"):
-                            continue
-                        
-                        if "hud/icons2d" in hashes[chunk.hash]:
-                            files_in_wad.add(chunk.hash)
-                            continue
-                        if re.match(asset_pattern, hashes[chunk.hash]) == None:
-                            files_in_wad.add(chunk.hash)
-                            continue
-                        
-                        newdata = stream2tex(chunk.data)
-                        newpath = hashes[chunk.hash].replace(".dds",".tex")
-                        newhash = xxh64(newpath).hexdigest()
-                        hashes[newhash] = newpath
-                        chunk.hash = newhash
-                        chunk.extension = "tex"
-                        chunk.data = newdata
-                        files_in_wad.add(chunk.hash)
-                    except Exception as e:
-                        print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
-                        files_in_wad.add(chunk.hash)
-                        failed_conversion = True
-                elif chunk.extension == "bin":
-                    # determine if the wad has a bin file
-                    has_bin = True
-                elif chunk.extension == "tex":
-                    files_in_wad.add(chunk.hash)
-        else:
-            for chunk in wad_file.chunks:
-                if chunk.extension == "dds":
-                    files_in_wad.add(chunk.hash)
-        
-        #! fix bin files and remap the remaining dds files
-        for chunk in wad_file.chunks:
-            if chunk.extension == "bnk" and champ_name != "":
-                try:
-                    if hashes[chunk.hash].endswith("sfx_events.bnk"):
-                        chunk.hash = hashes[chunk.hash].replace("sfx_events.bnk", f"sfx_events.old.bnk")
-                except Exception as e:
-                    print(f'File Hash: "{chunk.hash}" bnk could not be fixed {e}')
-            elif chunk.extension == "bin":
-                try:
+                if chunk.extension == "bin":
                     bin_file = BIN()
                     bin_file.read(path="", raw=chunk.data)
-                    bin_file = parse_bin(chunk.hash, bin_file)
-                    chunk.data = bin_file.write(path="", raw=True)
-                except Exception as e:
-                    print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
-            chunks_dict[chunk.hash] = chunk.data
+                    for entry in bin_file.entries:
+                        for item in entry.data:
+                            traverse_bin(item.data, find_missing_hashes)
+            
+            # determine the champion name
+            for char in allowed_chars:
+                regex = re.compile(f"(WAD/)?{char}\.wad.client", re.IGNORECASE)
+                if re.match(regex, wad_name) != None:
+                    print(f"Found {char} in {wad_name}")
+                    champ_name = char
+        
+        # Inner function to convert DDS to TEX
+        def convert_dds_to_tex():
+            nonlocal failed_conversion, has_bin
+            
+            if champ_name != "":
+                for chunk in wad_file.chunks:
+                    chunk.read_data(bs)
+                    if chunk.extension == "dds":
+                        try:
+                            
+                            if hashes[chunk.hash].split("/")[-1].startswith("2x") or hashes[chunk.hash].split("/")[-1].startswith("4x"):
+                                continue
+                            
+                            if "hud/icons2d" in hashes[chunk.hash]:
+                                files_in_wad.add(chunk.hash)
+                                continue
+                            if re.match(asset_pattern, hashes[chunk.hash]) == None and "/hud/" not in hashes[chunk.hash]:
+                                files_in_wad.add(chunk.hash)
+                                continue
+                            
+                            newdata = stream2tex(chunk.data)
+                            newpath = hashes[chunk.hash].replace(".dds",".tex")
+                            newhash = xxh64(newpath).hexdigest()
+                            hashes[newhash] = newpath
+                            chunk.hash = newhash
+                            chunk.extension = "tex"
+                            chunk.data = newdata
+                            files_in_wad.add(chunk.hash)
+                                
+                        except Exception as e:
+                            print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
+                            files_in_wad.add(chunk.hash)
+                            failed_conversion = True
+                    elif chunk.extension == "bin":
+                        # determine if the wad has a bin file
+                        has_bin = True
+                    elif chunk.extension == "tex":
+                        files_in_wad.add(chunk.hash)
+            else:
+                for chunk in wad_file.chunks:
+                    if chunk.extension == "dds":
+                        files_in_wad.add(chunk.hash)
+        
+        # Inner function to process bin files
+        def process_bin_files():
+            for chunk in wad_file.chunks:
+                if chunk.extension == "bnk" and champ_name != "":
+                    try:
+                        if hashes[chunk.hash].endswith("sfx_events.bnk"):
+                            chunk.hash = hashes[chunk.hash].replace("sfx_events.bnk", f"sfx_events.old.bnk")
+                    except Exception as e:
+                        print(f'File Hash: "{chunk.hash}" bnk could not be fixed {e}')
+                elif chunk.extension == "bin":
+                    try:
+                        bin_file = BIN()
+                        bin_file.read(path="", raw=chunk.data)
+                        bin_file = parse_bin(chunk.hash, bin_file)
+                        chunk.data = bin_file.write(path="", raw=True)
+                    except Exception as e:
+                        print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
+                chunks_dict[chunk.hash] = chunk.data
+        
+        # Execute core functions
+        find_hash_data()
+        
+        # Now wrap conversion process in progress bar if in standalone mode
+        if standalone:
+            chunks_to_process = [c for c in wad_file.chunks if c.extension in ["dds", "bin", "tex"]]
+            total_chunks = len(chunks_to_process)
+            
+            with Progress(
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeRemainingColumn(),
+            ) as progress:
+                task = progress.add_task(f"[cyan]Processing {path.basename(wad_name)}...", total=total_chunks + 1)
+                
+                convert_dds_to_tex()
+                progress.update(task, advance=total_chunks+1)
+                
+                bin_task = progress.add_task("[cyan]Processing BIN files...", total=1)
+                process_bin_files()
+                progress.update(bin_task, advance=1)
+        else:
+            convert_dds_to_tex()
+            process_bin_files()
+            
+        #! if some dds files failed to convert, download bin file
+        if failed_conversion and (re.match(pattern, champ_name) != None) and champ_name != "":
+            if skin_number == 0:
+                for id in range(1,100):
+                    hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin{id}_tx_cm.dds").hexdigest()
+                    if hdds in files_in_wad:
+                        skin_number = id
+                        break
+            if skin_number == 0:
+                for id in range(1,10):
+                    hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin0{id}_tx_cm.dds").hexdigest()
+                    if hdds in files_in_wad:
+                        skin_number = id
+                        break
 
+            if not has_bin:
+                print(f"Assuming {champ_name} in {wad_name} with skin {skin_number}")
+                try:
+                    url = f"http://raw.communitydragon.org/latest/game/data/characters/{champ_name}/skins/skin{skin_number}.bin"
+                    req = request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    tempbin = request.urlopen(req).read()
+
+                    bin_file = BIN()
+                    bin_file.read(path="", raw=tempbin)
+
+                    bin_chunk = WADChunk()  # Instantiate the chunk
+                    bin_chunk.write_data(
+                        bs,
+                        0,  # chunk_id
+                        xxh64(f"data/characters/{champ_name}/skins/skin{skin_number}.bin").hexdigest(),  # chunk_hash
+                        bin_file.write(path="", raw=True),  # chunk_data
+                        previous_chunks=(wad_file.chunks[i] for i in range(len(wad_file.chunks)))
+                    )
+                    bin_chunk.extension = "bin"
+                    wad_file.chunks.append(bin_chunk)
+                    print(f"Downloaded {champ_name} skin0.bin from communitydragon")
+                except Exception as e:
+                    print(f"Couldn't download {champ_name} skin0.bin from {url}\n{e}")
+
+    # Create the final WAD
     wad = WAD()
     wad.chunks = [WADChunk.default() for _ in range(len(chunks_dict))]
 
-    with wad.stream("", "rb+", raw=wad.write("", raw=True)) as bs:
-        for idx, (chunk_hash, chunk_data) in enumerate(chunks_dict.items()):
-            wad.chunks[idx].write_data(
-                bs,
-                idx,
-                chunk_hash,
-                chunk_data,
-                previous_chunks=(wad.chunks[i] for i in range(idx))
-            )
-            wad.chunks[idx].free_data()
-
-        final_bytes = bs.raw()
+    # Write the final WAD, with progress bar if standalone
+    if standalone:
+        with Progress(
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        ) as progress:
+            write_task = progress.add_task("[cyan]Writing WAD file...", total=len(chunks_dict))
+            
+            with wad.stream("", "rb+", raw=wad.write("", raw=True)) as bs:
+                for idx, (chunk_hash, chunk_data) in enumerate(chunks_dict.items()):
+                    wad.chunks[idx].write_data(
+                        bs,
+                        idx,
+                        chunk_hash,
+                        chunk_data,
+                        previous_chunks=(wad.chunks[i] for i in range(idx))
+                    )
+                    wad.chunks[idx].free_data()
+                    progress.update(write_task, advance=1)
+                
+                final_bytes = bs.raw()
+    else:
+        with wad.stream("", "rb+", raw=wad.write("", raw=True)) as bs:
+            for idx, (chunk_hash, chunk_data) in enumerate(chunks_dict.items()):
+                wad.chunks[idx].write_data(
+                    bs,
+                    idx,
+                    chunk_hash,
+                    chunk_data,
+                    previous_chunks=(wad.chunks[i] for i in range(idx))
+                )
+                wad.chunks[idx].free_data()
+            
+            final_bytes = bs.raw()
 
     return final_bytes
 
@@ -332,7 +468,7 @@ def parse_fantome(fantome_path: str) -> None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wad.client") as tmp_file:
             tmp_file.write(wad_bytes)
             tmp_file.flush() 
-            final_wads_dict[wad_name] = parse_wad(tmp_file.name, wad_name)
+            final_wads_dict[wad_name] = parse_wad(tmp_file.name, wad_name,True)
 
     final_zip_buffer = BytesIO()
     final_zip_file = ZipFile(final_zip_buffer, 'w', ZIP_DEFLATED, False)
@@ -349,7 +485,7 @@ def parse_fantome(fantome_path: str) -> None:
     with open(fantome_path, 'wb') as file:
         print(f"Writing Fantome: {fantome_path}")
         file.write(final_zip_buffer.getvalue())
-    
+
 if path.isfile(input_path) and input_path.endswith('.bin'): # input is a bin file
     try:
         bin_file = BIN()
@@ -364,7 +500,7 @@ elif path.isfile(input_path) and input_path.endswith('.wad.client'): # input is 
     try:
         print(f"Parsing Wad: {input_path}...")
         print(path.join("WAD",path.basename(input_path)))
-        wad_bytes = parse_wad(input_path, path.basename(input_path),True)
+        wad_bytes = parse_wad(input_path, path.basename(input_path), standalone=True)
         print("Writing .wad file")
         with open(input_path, 'wb') as f:
             f.write(wad_bytes)
