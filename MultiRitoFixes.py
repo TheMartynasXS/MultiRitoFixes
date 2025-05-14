@@ -104,7 +104,7 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
 
 bin_assets = set()
 def rename(obj):
-    pattern = re.compile(r"assets/(characters/[a-m])", re.IGNORECASE)
+    pattern = re.compile(r"assets/(characters/[a-r])", re.IGNORECASE)
     is_affected_asset = (re.match(pattern, obj) != None)
     if obj.lower().endswith(".dds"):
         if is_affected_asset and (not (xxh64(obj.lower()).hexdigest()  in files_in_wad)):
@@ -172,7 +172,7 @@ def parse_wad(wad_path: str,wad_name: str) -> bytes:
             elif chunk.extension == "bin":
                 has_bin = True
 
-        pattern = re.compile(r"^[a-m]", re.IGNORECASE)
+        pattern = re.compile(r"^[a-r]", re.IGNORECASE)
         if (re.match(pattern, champ_name) != None) and champ_name != "":
             if skin_number == 0:
                 for id in range(1,100):
