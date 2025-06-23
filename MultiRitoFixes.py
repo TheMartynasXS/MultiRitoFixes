@@ -275,19 +275,22 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
                     chunk.read_data(bs)
                     if chunk.extension == "dds":
                         try:
-                            
-                            if hashes[chunk.hash].split("/")[-1].startswith("2x") or hashes[chunk.hash].split("/")[-1].startswith("4x"):
+                            this_string = hashes.get(chunk.hash, None)
+                            if this_string is None:
+                                print(f'File Hash: "{chunk.hash}" not found in hashes, skipping conversion')
+                                failed_conversion = True
                                 continue
-                            
-                            if "hud/icons2d" in hashes[chunk.hash]:
+                            if this_string.split("/")[-1].startswith("2x") or this_string.split("/")[-1].startswith("4x"):
+                                continue
+                            if "hud/icons2d" in this_string:
                                 files_in_wad.add(chunk.hash)
                                 continue
-                            if re.match(asset_pattern, hashes[chunk.hash]) == None and "/hud/" not in hashes[chunk.hash]:
+                            if re.match(asset_pattern, this_string) == None and "/hud/" not in this_string:
                                 files_in_wad.add(chunk.hash)
                                 continue
                             
                             newdata = stream2tex(chunk.data)
-                            newpath = hashes[chunk.hash].replace(".dds",".tex")
+                            newpath = this_string.replace(".dds",".tex")
                             newhash = xxh64(newpath).hexdigest()
                             hashes[newhash] = newpath
                             chunk.hash = newhash
@@ -296,7 +299,7 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
                             files_in_wad.add(chunk.hash)
                                 
                         except Exception as e:
-                            print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
+                            print(f'File Hash: "{chunk.hash}" Unknown error: {e}')
                             files_in_wad.add(chunk.hash)
                             failed_conversion = True
                     elif chunk.extension == "bin":
