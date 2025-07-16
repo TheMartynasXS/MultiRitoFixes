@@ -184,13 +184,14 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
 
 def rename(obj):
     obj = obj.lower()
-    pattern = re.compile(r"assets/(characters/[a-r])", re.IGNORECASE)
+    pattern = re.compile(r"assets/(characters/[a-t])", re.IGNORECASE)
     is_affected_asset = (re.match(pattern, obj) != None)
     if obj.endswith(".dds"):
         if is_affected_asset and (not (xxh64(obj).hexdigest()  in files_in_wad)):
             ext = re.compile(r"\.dds$", re.IGNORECASE)
-            # print(f"Couldn't find {obj} in the wad renaming to .tex {xxh64(obj).hexdigest()}")
             obj = re.sub(ext, ".tex", obj)
+        elif is_affected_asset and (xxh64(obj.replace(r".dds$", ".tex")).hexdigest() in files_in_wad):
+            pass
     elif obj.endswith(".tex") and (not (xxh64(obj).hexdigest()  in files_in_wad)):
         ext = re.compile(r"\.tex$", re.IGNORECASE)
         newobj = re.sub(ext, ".dds", obj)
@@ -233,6 +234,7 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
     chunks_dict = {}
 
     wad_champion = None
+    champ_name = ""
 
     with wad_file.stream(wad_path, "rb+") as bs:
         files_in_wad.clear()
@@ -242,8 +244,8 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
         skin_number = 0
         
         # Initialize inside the stream context
-        pattern = re.compile(r"^[a-r]", re.IGNORECASE)
-        asset_pattern = re.compile(r"assets/(characters/[a-r])", re.IGNORECASE)
+        pattern = re.compile(r"^[a-t]", re.IGNORECASE)
+        asset_pattern = re.compile(r"assets/(characters/[a-t])", re.IGNORECASE)
         failed_conversion = False
         
         # Inner function to find hash data
@@ -291,6 +293,7 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
                             
                             newdata = stream2tex(chunk.data)
                             newpath = this_string.replace(".dds",".tex")
+                            # print(f"{this_string} -> {newpath}")
                             newhash = xxh64(newpath).hexdigest()
                             hashes[newhash] = newpath
                             chunk.hash = newhash
@@ -320,9 +323,13 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
                         if hashes[chunk.hash].endswith("sfx_events.bnk"):
                             chunk.hash = hashes[chunk.hash].replace("sfx_events.bnk", f"sfx_events.old.bnk")
                     except Exception as e:
-                        print(f'File Hash: "{chunk.hash}" bnk could not be fixed {e}')
+                        pass
+                        # print(f'File Hash: "{chunk.hash}" bnk could not be fixed {e}')
+                        
                 elif chunk.extension == "bin":
                     try:
+                        if chunk.hash == xxh64(f"data/characters/{champ_name}/skins/root.bin").hexdigest() or chunk.hash == xxh64(f"data/characters/{champ_name}/{champ_name}.bin").hexdigest():
+                            continue
                         bin_file = BIN()
                         bin_file.read(path="", raw=chunk.data)
                         bin_file = parse_bin(chunk.hash, bin_file)
@@ -357,48 +364,60 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
             convert_dds_to_tex()
             process_bin_files()
             
-        #! if some dds files failed to convert, download bin file
-        if failed_conversion and (re.match(pattern, champ_name) != None) and champ_name != "":
-            if skin_number == 0:
-                for id in range(1,100):
-                    hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin{id}_tx_cm.dds").hexdigest()
-                    if hdds in files_in_wad:
-                        skin_number = id
-                        break
-            if skin_number == 0:
-                for id in range(1,10):
-                    hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin0{id}_tx_cm.dds").hexdigest()
-                    if hdds in files_in_wad:
-                        skin_number = id
-                        break
+        # #! if some dds files failed to convert, download bin file
+        # if failed_conversion and (re.match(pattern, champ_name) != None) and champ_name != "":
+        #     if skin_number == 0:
+        #         for id in range(1,100):
+        #             hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin{id}_tx_cm.dds").hexdigest()
+        #             if hdds in files_in_wad:
+        #                 skin_number = id
+        #                 break
+        #     if skin_number == 0:
+        #         for id in range(1,10):
+        #             hdds = xxh64(f"assets/characters/{champ_name}/skins/skin{id}/{champ_name}_skin0{id}_tx_cm.dds").hexdigest()
+        #             if hdds in files_in_wad:
+        #                 skin_number = id
+        #                 break
 
-            if not has_bin:
-                print(f"Assuming {champ_name} in {wad_name} with skin {skin_number}")
-                try:
-                    url = f"http://raw.communitydragon.org/latest/game/data/characters/{champ_name}/skins/skin{skin_number}.bin"
-                    req = request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                    tempbin = request.urlopen(req).read()
+        #     if not has_bin:
+        #         print(f"Assuming {champ_name} in {wad_name} with skin {skin_number}")
+        #         try:
+        #             url = f"http://raw.communitydragon.org/latest/game/data/characters/{champ_name}/skins/skin{skin_number}.bin"
+        #             req = request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        #             tempbin = request.urlopen(req).read()
 
-                    bin_file = BIN()
-                    bin_file.read(path="", raw=tempbin)
+        #             bin_file = BIN()
+        #             bin_file.read(path="", raw=tempbin)
 
-                    bin_chunk = WADChunk()  # Instantiate the chunk
-                    bin_chunk.write_data(
-                        bs,
-                        0,  # chunk_id
-                        xxh64(f"data/characters/{champ_name}/skins/skin{skin_number}.bin").hexdigest(),  # chunk_hash
-                        bin_file.write(path="", raw=True),  # chunk_data
-                        previous_chunks=(wad_file.chunks[i] for i in range(len(wad_file.chunks)))
-                    )
-                    bin_chunk.extension = "bin"
-                    wad_file.chunks.append(bin_chunk)
-                    print(f"Downloaded {champ_name} skin0.bin from communitydragon")
-                except Exception as e:
-                    print(f"Couldn't download {champ_name} skin0.bin from {url}\n{e}")
+        #             bin_chunk = WADChunk()  # Instantiate the chunk
+        #             bin_chunk.write_data(
+        #                 bs,
+        #                 0,  # chunk_id
+        #                 xxh64(f"data/characters/{champ_name}/skins/skin{skin_number}.bin").hexdigest(),  # chunk_hash
+        #                 bin_file.write(path="", raw=True),  # chunk_data
+        #                 previous_chunks=(wad_file.chunks[i] for i in range(len(wad_file.chunks)))
+        #             )
+        #             bin_chunk.extension = "bin"
+        #             wad_file.chunks.append(bin_chunk)
+        #             print(f"Downloaded {champ_name} skin0.bin from communitydragon")
+        #         except Exception as e:
+        #             print(f"Couldn't download {champ_name} skin0.bin from {url}\n{e}")
 
     # Create the final WAD
     wad = WAD()
+
+    # Remove specific bin/subchunktoc chunks if present
+    for key in (
+        xxh64(f"data/characters/{champ_name}/skins/root.bin").hexdigest(),
+        xxh64(f"data/characters/{champ_name}/{champ_name}.bin").hexdigest(),
+        xxh64(f"data/final/champions/{champ_name}.wad.subchunktoc").hexdigest()
+    ):
+        chunks_dict.pop(key, None)
+
+
     wad.chunks = [WADChunk.default() for _ in range(len(chunks_dict))]
+    
+    
 
     # Write the final WAD, with progress bar if standalone
     if standalone:
@@ -408,7 +427,6 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         ) as progress:
             write_task = progress.add_task("[cyan]Writing WAD file...", total=len(chunks_dict))
-            
             with wad.stream("", "rb+", raw=wad.write("", raw=True)) as bs:
                 for idx, (chunk_hash, chunk_data) in enumerate(chunks_dict.items()):
                     wad.chunks[idx].write_data(

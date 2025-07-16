@@ -7,3 +7,5 @@ log.txt
 hashes.game.txt
 __pycache__
 .vscode
+input/
+output/
