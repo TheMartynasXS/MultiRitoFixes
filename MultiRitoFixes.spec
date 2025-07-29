@@ -9,7 +9,7 @@ a = Analysis(
     ['MultiRitoFixes.py'],
     pathex=[],
     binaries=[],
-    datas=[('AllowedChars.txt', '.'), ('hashes.game.txt', '.'), ('LICENSE','.')],
+    datas=[('hashes.game.txt', '.'), ('LICENSE','.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

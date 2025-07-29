@@ -60,6 +60,7 @@ def stream2tex(chunk_data):
         'dwCaps': dwCaps,
         'dwCaps2': dwCaps2,
     }
+    
     # DDS pixel format
     dds_pixel_format = dds_header['ddspf']
     
@@ -74,43 +75,31 @@ def stream2tex(chunk_data):
     # Check format based on FourCC or flags
     dxt1_code = int('DXT1'.encode('ascii')[::-1].hex(), 16)
     dxt5_code = int('DXT5'.encode('ascii')[::-1].hex(), 16)
-    dxt3_code = int('DXT3'.encode('ascii')[::-1].hex(), 16)
-    if dds_pixel_format['dwFourCC'] == dxt3_code:
-        dds_data = convert_dxt3_to_dxt5_bytes(dds_data, width, height)
-        dds_pixel_format['dwFourCC'] = dxt5_code
-
+    
     if dds_pixel_format['dwFourCC'] == dxt1_code:
         tex_format = TEXFormat.DXT1
     elif dds_pixel_format['dwFourCC'] == dxt5_code:
         tex_format = TEXFormat.DXT5
     elif (dds_pixel_format['dwFlags'] & 0x00000041) == 0x00000041:
-        # BGRA8 in DDS: B=0x000000ff, G=0x0000ff00, R=0x00ff0000, A=0xff000000
         if (dds_pixel_format['dwRGBBitCount'] != 32 or 
             dds_pixel_format['dwRBitMask'] != 0x000000ff or 
             dds_pixel_format['dwGBitMask'] != 0x0000ff00 or 
             dds_pixel_format['dwBBitMask'] != 0x00ff0000 or 
             dds_pixel_format['dwABitMask'] != 0xff000000):
-            print(dds_pixel_format)
-            # print actual pixel bit mask as hex
-            print(f"R: {dds_pixel_format['dwRBitMask']:08x}, G: {dds_pixel_format['dwGBitMask']:08x}, B: {dds_pixel_format['dwBBitMask']:08x}, A: {dds_pixel_format['dwABitMask']:08x}")
-            raise Exception('Ritoddstex: Failed: stream2tex: DDS file is not in exact BGRA8 format.')
-        tex_format = TEXFormat.RGBA8  # This is actually BGRA8 in DDS
+            raise Exception('Ritoddstex: Failed: stream2tex: DDS file is not in exact RGBA8 format.')
+        tex_format = TEXFormat.RGBA8
     else:
-        print(f"other: {TEXFormat.DXT1} {TEXFormat.DXT5}")
-        print(f"pixel format: {dds_pixel_format['dwFourCC']}")
         raise Exception(f'Ritoddstex: Failed: stream2tex: Unsupported DDS format: {dds_pixel_format["dwFourCC"]}')
     
     # Check for mipmaps
-    has_mipmaps = False
-        
-    
-    
+    has_mipmaps = dds_header['dwMipMapCount'] > 1 if 'dwMipMapCount' in dds_header and dds_header['dwMipMapCount'] else False
+
     # Prepare texture data
     tex_data = []
-    
+
     if has_mipmaps:
         # Set block size and bytes per block based on format
-        if tex_format in (TEXFormat.DXT1, TEXFormat.DXT1_):
+        if tex_format == TEXFormat.DXT1:
             block_size = 4
             bytes_per_block = 8
         elif tex_format == TEXFormat.DXT5:
@@ -119,26 +108,28 @@ def stream2tex(chunk_data):
         else:  # RGBA8
             block_size = 1
             bytes_per_block = 4
-        
+
         # Calculate and extract mipmap data
         mipmap_count = dds_header['dwMipMapCount']
         current_offset = 0
-        
+
         for i in range(mipmap_count):
-            current_width = max(width // (1 << i), 1)
-            current_height = max(height // (1 << i), 1)
-            block_width = (current_width + block_size - 1) // block_size
-            block_height = (current_height + block_size - 1) // block_size
-            current_size = bytes_per_block * block_width * block_height
-            
-            # Extract data for this mipmap level
+            current_width = max(width >> i, 1)
+            current_height = max(height >> i, 1)
+            if tex_format in (TEXFormat.DXT1, TEXFormat.DXT5):
+                block_w = (current_width + 3) // 4
+                block_h = (current_height + 3) // 4
+                current_size = block_w * block_h * bytes_per_block
+            else:
+                current_size = current_width * current_height * bytes_per_block
+
             if current_offset + current_size <= len(dds_data):
                 data = dds_data[current_offset:current_offset+current_size]
                 tex_data.append(data)
                 current_offset += current_size
             else:
                 raise Exception(f'Ritoddstex: Failed: stream2tex: DDS data too small for mipmap {i}')
-        
+
         # Mipmap order is reversed in TEX compared to DDS
         tex_data.reverse()
     else:
@@ -166,72 +157,3 @@ def stream2tex(chunk_data):
         tex_bytes.extend(block_data)
     
     return bytes(tex_bytes)
-
-def convert_dxt3_to_dxt5_bytes(dxt3_bytes, width, height):
-    """
-    Converts a DXT3 DDS image (as bytes) to DXT5 DDS image (as bytes).
-    Only the pixel data is converted; header must be handled externally if needed.
-    """
-    import io
-
-    # DXT3 and DXT5 both use 16 bytes per 4x4 block
-    block_w = (width + 3) // 4
-    block_h = (height + 3) // 4
-    block_count = block_w * block_h
-
-    dxt3_stream = io.BytesIO(dxt3_bytes)
-    dxt5_data = bytearray()
-
-    def convert_dxt3_alpha_to_dxt5(block8):
-        # block8: 8 bytes DXT3 alpha block
-        # Returns: 8 bytes DXT5 alpha block
-        # 1. Extract 16 4-bit alpha values
-        alphas = []
-        for i in range(0, 8, 2):
-            byte = block8[i] | (block8[i+1] << 8)
-            alphas.append(byte & 0xF)
-            alphas.append((byte >> 4) & 0xF)
-        # Scale 4-bit alpha to 8-bit
-        alphas = [int(a * 17) for a in alphas]
-        # Find min/max
-        alpha0 = max(alphas)
-        alpha1 = min(alphas)
-        # Build alpha lookup table (DXT5 spec)
-        alpha_table = [alpha0, alpha1]
-        if alpha0 > alpha1:
-            for i in range(1, 7):
-                alpha_table.append(((7-i)*alpha0 + i*alpha1)//7)
-        else:
-            for i in range(1, 5):
-                alpha_table.append(((5-i)*alpha0 + i*alpha1)//5)
-            alpha_table.extend([0, 255])
-        # For each alpha, find closest index in table
-        indices = []
-        for a in alphas:
-            best = min(range(8), key=lambda i: abs(alpha_table[i] - a))
-            indices.append(best)
-        # Pack indices into 6 bytes (3 bits per alpha, 16 alphas)
-        bits = 0
-        bitlen = 0
-        packed = bytearray()
-        for idx in indices:
-            bits |= (idx & 0x7) << bitlen
-            bitlen += 3
-            if bitlen >= 8:
-                packed.append(bits & 0xFF)
-                bits >>= 8
-                bitlen -= 8
-        while len(packed) < 6:
-            packed.append(bits & 0xFF)
-            bits >>= 8
-        # Compose DXT5 alpha block
-        return bytes([alpha0, alpha1]) + packed
-
-    for _ in range(block_count):
-        alpha_block = dxt3_stream.read(8)
-        color_block = dxt3_stream.read(8)
-        dxt5_alpha = convert_dxt3_alpha_to_dxt5(alpha_block)
-        dxt5_data.extend(dxt5_alpha)
-        dxt5_data.extend(color_block)
-
-    return bytes(dxt5_data)

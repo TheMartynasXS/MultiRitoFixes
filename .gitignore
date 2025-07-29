@@ -3,9 +3,10 @@ build
 *.csv
 latest.py
 test.py
-log.txt
 hashes.game.txt
 __pycache__
-.vscode
-input/
-output/
+log.txt
+texconv.exe
+*.wad.client
+*.wad
+*.fantome
