@@ -97,11 +97,11 @@ if len(argv) < 2:
     exit()
 print(f"Running on: {argv[1]}")
     
-print(path.join(path.basename(argv[0]), "texconv.exe"))
-if not path.exists(path.join(path.dirname(argv[0]), "texconv.exe")):
-    print("texconv.exe not found in the current directory. Download and place it in the same folder as this program.")
-    input("Press Enter to exit...")
-    exit()
+# print(path.join(path.basename(argv[0]), "texconv.exe"))
+# if not path.exists(path.join(path.dirname(argv[0]), "texconv.exe")):
+#     print("texconv.exe not found in the current directory. Download and place it in the same folder as this program.")
+#     input("Press Enter to exit...")
+#     exit()
 
 
 input_path = argv[1]
@@ -232,13 +232,16 @@ def rename(obj):
     obj = obj.lower()
     pattern = re.compile(r"assets/(characters/)", re.IGNORECASE)
     is_affected_asset = (re.match(pattern, obj) is not None)
+    
     if obj.endswith(".dds"):
+        
         if is_affected_asset and (xxh64(obj).hexdigest() not in files_in_wad):
             ext = re.compile(r"\.dds$", re.IGNORECASE)
             obj = re.sub(ext, ".tex", obj)
         elif is_affected_asset and (xxh64(obj.replace(r".dds$", ".tex")).hexdigest() in files_in_wad):
             pass
     elif obj.endswith(".tex") and (xxh64(obj).hexdigest() not in files_in_wad):
+        
         ext = re.compile(r"\.tex$", re.IGNORECASE)
         newobj = re.sub(ext, ".dds", obj)
         if is_affected_asset and (xxh64(newobj).hexdigest() in files_in_wad):
@@ -249,6 +252,13 @@ def find_missing_hashes(obj):
     obj = obj.lower()
     if xxh64(obj).hexdigest() not in hashes and obj.find(".") != -1:
         hashes[xxh64(obj).hexdigest()] = obj
+        if obj.endswith(".dds"):
+            hashes[xxh64(obj).hexdigest()] = obj.replace(".dds", ".tex")
+            print(f"[INFO] New hash found: {xxh64(obj).hexdigest()} -> {obj.replace('.dds', '.tex')}")
+        elif obj.endswith(".tex"):
+            hashes[xxh64(obj).hexdigest()] = obj.replace(".tex", ".dds")
+            print(f"[INFO] New hash found: {xxh64(obj).hexdigest()} -> {obj.replace('.tex', '.dds')}")
+        print(f"[INFO] New hash found: {xxh64(obj).hexdigest()} -> {obj}")
     return obj
 #recursively search for string type values
 def traverse_bin(obj, function=rename):
@@ -285,7 +295,6 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
         
         # Initialize inside the stream context
         asset_pattern = re.compile(r"assets/(characters/)", re.IGNORECASE)
-        failed_conversion = False
         
         # Inner function to find hash data
         def find_hash_data():
@@ -308,16 +317,14 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
         
         # Inner function to convert DDS to TEX
         def convert_dds_to_tex():
-            nonlocal failed_conversion, has_bin
-            
             for chunk in wad_file.chunks:
                 chunk.read_data(bs)
                 if chunk.extension == "dds":
                     try:
                         this_string = hashes.get(chunk.hash, None)
                         if this_string is None:
-                            print(f'(this is not bad) File Hash: "{chunk.hash}" not found in hashes, skipping conversion')
-                            failed_conversion = True
+                            print(f'[OK  ] File Hash: "{chunk.hash}" not found in hashes, skipping conversion')
+                            files_in_wad.add(chunk.hash)
                             continue
                         if this_string.split("/")[-1].startswith("2x") or this_string.split("/")[-1].startswith("4x"):
                             continue
@@ -327,19 +334,32 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
                         if re.match(asset_pattern, this_string) is None and "/hud/" not in this_string:
                             files_in_wad.add(chunk.hash)
                             continue
-                        print(f'Converting {this_string} to TEX format')
+                        print(f'[OK  ]Converting {this_string} to TEX format')
                         # write temp file
                         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dds")
                         temp_file.write(chunk.data)
                         temp_file.close()
 
+
+                
                         command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name]
                         subprocess.run(command, capture_output=True, text=True)
-
+                        
+                        
+                        with open(temp_file.name, "rb") as f:
+                            dds_header = f.read(128)
+                            
+                        width = int.from_bytes(dds_header[12:16], 'little')
+                        height = int.from_bytes(dds_header[16:20], 'little')
+                        print(f"[INFO] Width: {width}, Height: {height}")
+                        if width % 4 != 0 or height % 4 != 0:
+                            print(f"[WARN] {this_string} has non-power-of-2 dimensions ({width}x{height}), skipping conversion")
+                            files_in_wad.add(chunk.hash)
+                            continue
                         # Find the output file (texconv outputs to same dir with _BC3_UNORM.dds suffix)
                         with open(temp_file.name, "rb") as out_f:
                             out_buffer = out_f.read()
-
+                        
                         newdata = stream2tex(out_buffer)
                         newpath = this_string.replace(".dds",".tex")
                         # print(f"{this_string} -> {newpath}")
@@ -351,12 +371,8 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
                         files_in_wad.add(chunk.hash)
                             
                     except Exception as e:
-                        print(f'File Hash: "{chunk.hash}" Unknown error: {e}')
+                        print(f'[Err ] File Hash: "{chunk.hash}" Unknown error: {e}')
                         files_in_wad.add(chunk.hash)
-                        failed_conversion = True
-                elif chunk.extension == "bin":
-                    # determine if the wad has a bin file
-                    has_bin = True
                 elif chunk.extension == "tex":
                     files_in_wad.add(chunk.hash)
         
@@ -371,19 +387,18 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
                     if this_string.endswith("sfx_events.bnk"):
                         new_string = this_string.replace("sfx_events.bnk", "sfx_events.old.bnk")
                         hashes[chunk.hash] = new_string
-                        chunk.hash = new_string
+                        chunk.hash = xxh64(new_string).hexdigest()
                         print(f'Renaming {this_string} to {new_string}')
                         
                 elif chunk.extension == "bin":
                     try:
-                        
                         for champ_name in champions.keys():
                             if chunk.hash == xxh64(f"data/characters/{champ_name}/skins/root.bin").hexdigest() \
                                 or chunk.hash == xxh64(f"data/characters/{champ_name}/{champ_name}.bin").hexdigest():
                                 continue
                         this_string = hashes.get(chunk.hash, None)
                         if this_string:
-                            print(f'Processing BIN file: {this_string}')
+                            print(f'[OK  ] Processing BIN file: {this_string}')
                         bin_file = BIN()
                         bin_file.read(path="", raw=chunk.data)
                         bin_file = parse_bin(chunk.hash, bin_file)
@@ -430,7 +445,13 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
             
         ):
             chunks_dict.pop(key, None)
-
+    for hash in files_in_wad:
+        this_string = hashes.get(hash, "").lower()
+        if this_string.endswith(".dds"):
+            continue
+        if path.basename(this_string).startswith("2x") or path.basename(this_string).startswith("4x"):
+            chunks_dict.pop(hash, None)
+            
 
     wad.chunks = [WADChunk.default() for _ in range(len(chunks_dict))]
     
@@ -622,7 +643,8 @@ elif path.isdir(input_path): # input is a directory
     if cslol_path != "":
         import subprocess
         subprocess.Popen(cslol_path)
-    
 else:
     print("Couldn't find any files to fix")
     input()
+
+print("Done!")
