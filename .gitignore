@@ -10,3 +10,5 @@ texconv.exe
 *.wad.client
 *.wad
 *.fantome
+hashpreprocess.py
+hashes2.game.txt

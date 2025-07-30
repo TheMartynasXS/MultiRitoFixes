@@ -1,9 +1,9 @@
 from io import BytesIO
-import os
-import shutil
+
 import sys
 from sys import argv
-from os import path
+from os import path, listdir
+
 import re
 from xxhash import xxh64
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -49,7 +49,7 @@ else:
 champions = dict()
 
 default_health_bar_style = 12
-for champion in os.listdir(league_path):
+for champion in listdir(league_path):
     pattern = re.compile(r"^[a-z]+\.wad\.client$", re.IGNORECASE)
     if pattern.match(champion):
         champions[champion.lower().split('.')[0]] = default_health_bar_style
@@ -96,9 +96,10 @@ if len(argv) < 2:
     input("Press Enter to exit...")
     exit()
 print(f"Running on: {argv[1]}")
-
-if not shutil.which("texconv.exe"):
-    print("texconv.exe not found in PATH. Download and place it in the same folder as this program.")
+    
+print(path.join(path.basename(argv[0]), "texconv.exe"))
+if not path.exists(path.join(path.dirname(argv[0]), "texconv.exe")):
+    print("texconv.exe not found in the current directory. Download and place it in the same folder as this program.")
     input("Press Enter to exit...")
     exit()
 
