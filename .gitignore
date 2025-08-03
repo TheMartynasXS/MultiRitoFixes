@@ -12,3 +12,4 @@ texconv.exe
 *.fantome
 hashpreprocess.py
 hashes2.game.txt
+backup.py

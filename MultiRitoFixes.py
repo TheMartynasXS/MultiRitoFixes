@@ -2,8 +2,7 @@ from io import BytesIO
 
 import sys
 from sys import argv
-from os import path, listdir
-
+from os import path, listdir, makedirs
 import re
 from xxhash import xxh64
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -12,99 +11,55 @@ import tempfile
 import json
 from functions import stream2tex 
 import subprocess
-
-from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, TimeElapsedColumn
+from colorama import init, Fore, Style
 
 import time
 # check if process called "cslol-manager.exe" is running
 import psutil
+import msvcrt
 
-def wait_ps(process_name, kill=False):
-    #check if process is running
-    running = False
-    p_path = ""
-    
+def get_process_exe(process_name):
     for proc in psutil.process_iter(['name']):
         if proc.info['name'] == process_name:
-            running = True
-            p_path = proc.exe()
-            if kill:
-                proc.kill()
-                while proc.is_running():
-                    time.sleep(1)
-                print(f"{process_name} is closed")
-            break
-    return p_path
+            return proc.exe()
+    return None
 
-league_path = wait_ps("LeagueClient.exe", False)
+def kill_process(process_name):
+    for proc in psutil.process_iter(['name']):
+        if proc.info['name'] == process_name:
+            proc.kill()
+            log(f"Closed: {process_name}","ok")
 
-if league_path == "":
-    print("Run League of Legends before running this fixer.")
-    input("Press Enter to exit...")
-    exit()
-else:
-    league_path = path.join(path.dirname(league_path), "game", "data", "final", "champions")
+class bColor:
+    OKBLUE = Fore.BLUE
+    OKGREEN = Fore.GREEN
+    WARNING = Fore.YELLOW
+    FAIL = Fore.RED
+    ENDC = Style.RESET_ALL
     
-champions = dict()
-
-default_health_bar_style = 12
-for champion in listdir(league_path):
-    pattern = re.compile(r"^[a-z]+\.wad\.client$", re.IGNORECASE)
-    if pattern.match(champion):
-        champions[champion.lower().split('.')[0]] = default_health_bar_style
-
-# Manually extend champions with special cases
-champions.update({
-    "aniviaegg": default_health_bar_style,
-    "annietibbers": 5,
-    "azirsundisc": 3,
-    "elisespider": default_health_bar_style,
-    "gnarbig": default_health_bar_style,
-    "ireliablades": 5,
-    "ivernminion": 5,
-    "kogmawdead": default_health_bar_style,
-    "luxair": default_health_bar_style,
-    "luxstorm": default_health_bar_style,
-    "luxmagma": default_health_bar_style,
-    "luxnature": default_health_bar_style,
-    "luxice": default_health_bar_style,
-    "luxmystic": default_health_bar_style,
-    "luxwater": default_health_bar_style,
-    "luxfire": default_health_bar_style,
-    "luxdark": default_health_bar_style,
-    "monkeykingflying": default_health_bar_style,
-    "monkeykingclone": default_health_bar_style,
-    "naafiripackmate": 9,
-    "nidaleecougar": default_health_bar_style,
-    "rammuspb": default_health_bar_style,
-    "rammusdbc": default_health_bar_style,
-    "shyvanadragon": default_health_bar_style,
-    "swaindemonform": default_health_bar_style,
-    "sonadjgenre03": default_health_bar_style,
-    "sonadjgenre02": default_health_bar_style,
-    "sonadjgenre01": default_health_bar_style,
-    "trundlewall": 1,
-    "yorickbigghoul": 5,
-    "zacrebirthbloblet": 1
-})
-
-
-if len(argv) < 2:
-    print('Do not run this program directly,\ndrag and drop file/folder on to the fixer')
-    print("https://github.com/Microsoft/DirectXTex/releases/latest/download/texconv.exe")
-    input("Press Enter to exit...")
-    exit()
-print(f"Running on: {argv[1]}")
+def log(message = "",type = "text", indent = False):
     
+    type = type.lower()
+    if indent:
+        message = "    " + message
+    if type == "ok" or type == "success":
+        print(f"{bColor.OKGREEN}[OK_] {message}{bColor.ENDC}")
+    elif type == "text":
+        print(f"[INF] {message}")
+    elif type == "info":
+        print(f"{bColor.OKBLUE}[INF] {message}{bColor.ENDC}")
+    elif type == "error":
+        print(f"{bColor.FAIL}[err] {message}{bColor.ENDC}")
+    elif type == "warning" or type == "warn":
+        print(f"{bColor.WARNING}[WRN] {message}{bColor.ENDC}")
 
-if not path.exists(path.join(path.dirname(argv[0]), "texconv.exe")):
-    print("texconv.exe not found in the current directory. Download and place it in the same folder as this program.")
-    input("Press Enter to exit...")
-    exit()
+league_path = None
+cslol_path = None
 
+champions = set()
+health_bars = dict()
 
-input_path = argv[1]
-cslol_path = ""
+default_hp_style = 12
 
 def compute_hash(s: str):
     if s.startswith("0x"):
@@ -114,9 +69,6 @@ def compute_hash(s: str):
     for b in s.encode('ascii').lower():
         h = (h ^ b) * 0x01000193
     return f"{h & 0xffffffff:08x}"
-
-
-files_in_wad = set()
 class CACHED_BIN_HASHES(dict):
     def __getitem__(self, key):
         if key in self.keys():
@@ -128,67 +80,219 @@ cached_bin = CACHED_BIN_HASHES()
 
 hashes_path = None
 hashes = dict()
+hashes_in_bin = dict()
+files_in_wad = set()
 
-if getattr(sys, 'frozen', False):
-    hashes_path = path.join(sys._MEIPASS, 'hashes.game.txt')
-else:
-    hashes_path = 'hashes.game.txt'
+def exit_with_input(message="Done!", type="text"):
+    log(message, type=type)
+    print("Press any key to continue...")
+    msvcrt.getch()
+    sys.exit(0)
+    
+if len(argv) < 2:
+    exit_with_input("Do not run this program directly, drag and drop file/folder on to the fixer", type="error")
+    exit()
+    
+def setup():
+    global league_path, cslol_path, champions, health_bars
+    global default_hp_style, hashes_path, hashes
+    log("Setting up MultiRitoFixes...","info")
+    temp_dir = tempfile.gettempdir()
+    
+    fixer_cache_path = path.join(temp_dir, "multiritofixes", "config.ini")
+    
+    if not path.exists(path.join(path.dirname(argv[0]), "texconv.exe")):
+        log("Texconv.exe not found in the current directory. Download and place it in the same folder as this program.","error")
+        exit_with_input("Texconv.exe not found", type="error")
 
+    if not path.exists(fixer_cache_path):
+        log("Fixer cache not found, creating new one...")
         
-if path.exists(hashes_path) and hashes_path != None:
-    with open(hashes_path, "r", encoding="utf-8") as file:
-        for line in file:
-            hash = line.split(" ")[0]
-            hashes[hash] = line.split(" ")[1].strip()
+        makedirs(path.dirname(fixer_cache_path), exist_ok=True)
+        
+        cslol_path = get_process_exe('cslol-manager.exe')
+        if cslol_path is None:
+            exit_with_input("cslol-manager.exe is not running. Please start it and try again.")
+        cslol_config = path.join(path.dirname(cslol_path), 'config.ini')
+        if path.exists(cslol_config):
+            with open(cslol_config, 'r') as f:
+                for line in f:
+                    if line.startswith('leaguePath='):
+                        league_path = line.split('=')[1].strip()
+                        break
+        
+        with open(fixer_cache_path, 'w') as f:
+            f.write(f"[fixer]\nleaguePath={league_path}\n")
+            f.write(f"cslolPath={cslol_path}\n")
+        log(f"Created fixer cache at {fixer_cache_path}",  indent=True)
+    else:
+        log(f"Using existing fixer cache at {fixer_cache_path}", indent=True)
+        with open(fixer_cache_path, 'r') as f:
+            config_data = f.read()
+            league_path_match = re.search(r'leaguePath\s*=\s*(.*)', config_data)
+            cslol_path_match = re.search(r'cslolPath\s*=\s*(.*)', config_data)
+            if league_path_match:
+                league_path = league_path_match.group(1).strip()
+            if cslol_path_match:
+                cslol_path = cslol_path_match.group(1).strip()
+    
+    champion_wad_path = path.join(path.dirname(league_path), "game", "data", "final", "champions")
+    if path.exists(champion_wad_path):
+        for champion in listdir(champion_wad_path):
+            pattern = re.compile(r"^[a-z]+\.wad\.client$", re.IGNORECASE)
+            if pattern.match(champion):
+                champions.add(champion.lower().replace('.wad.client', ''))
+        log(f"Found {len(champions)} champions in {champion_wad_path}", indent=True)
+    health_bars.update({
+        "aniviaegg": default_hp_style,
+        "annietibbers": 5,
+        "azirsundisc": 3,
+        "elisespider": default_hp_style,
+        "gnarbig": default_hp_style,
+        "ireliablades": 5,
+        "ivernminion": 5,
+        "kogmawdead": default_hp_style,
+        "luxair": default_hp_style,
+        "luxstorm": default_hp_style,
+        "luxmagma": default_hp_style,
+        "luxnature": default_hp_style,
+        "luxice": default_hp_style,
+        "luxmystic": default_hp_style,
+        "luxwater": default_hp_style,
+        "luxfire": default_hp_style,
+        "luxdark": default_hp_style,
+        "monkeykingflying": default_hp_style,
+        "monkeykingclone": default_hp_style,
+        "naafiripackmate": 9,
+        "nidaleecougar": default_hp_style,
+        "rammuspb": default_hp_style,
+        "rammusdbc": default_hp_style,
+        "shyvanadragon": default_hp_style,
+        "swaindemonform": default_hp_style,
+        "sonadjgenre03": default_hp_style,
+        "sonadjgenre02": default_hp_style,
+        "sonadjgenre01": default_hp_style,
+        "trundlewall": 1,
+        "yorickbigghoul": 5,
+        "zacrebirthbloblet": 1
+    })
 
-def parse_bin(bin_path, bin_file, is_standalone=False):
-    champion = None
+    if getattr(sys, 'frozen', False):
+        hashes_path = path.join(sys._MEIPASS, 'hashes.game.txt')
+    else:
+        hashes_path = 'hashes.game.txt'
+    if path.exists(hashes_path) and hashes_path != None:
+        with open(hashes_path, "r", encoding="utf-8") as file:
+            for line in file:
+                hash = line.split(" ")[0]
+                hashes[hash] = line.split(" ")[1].strip()
+        log(f"Loaded {len(hashes)} hashes from {hashes_path}", indent=True)
+
+    kill_process('cslol-manager.exe')
+    log("Setup complete! ", "ok", indent=False)
+    
+setup()
+
+def rename(obj, champion=None):
+    pattern = re.compile(r"assets\/(characters\/|shared\/|spells\/).*\.dds$", re.IGNORECASE)
+    is_affected_asset = (re.match(pattern, obj) is not None)
+    
+    shared_regex = re.compile(
+        rf"^ASSETS/(characters|shared|perks|particles|maps|spells)?.+\.", re.IGNORECASE
+        # rf"^ASSETS/(?!characters/{re.escape(champion)})(shared|perks|particles|maps|spells)?.+\.", re.IGNORECASE
+    ) if champion else None
+    
+    if is_affected_asset:
+        if (xxh64(obj.lower()).hexdigest() not in files_in_wad):
+            if( obj.endswith(".dds")):
+                text_line = obj.replace(".dds", "")
+                log(f"Renaming:   {text_line}{bColor.FAIL}.dds{bColor.ENDC}{bColor.OKGREEN}.tex{bColor.ENDC}", indent=True)
+                obj = obj.replace(".dds", ".tex")
+            else:
+                # log("didnt do shit")
+                pass
+                
+    # is_shared_asset = (re.match(shared_regex, obj) is not None) if shared_regex else False
+    # if is_shared_asset and xxh64(obj.lower()).hexdigest() in files_in_wad:
+    #     log(f"Repathing {obj} to ASSETS/rep/ in bin", indent=True)
+    #     obj = obj.replace("assets/", "ASSETS/rep/", 1)
+    # elif is_shared_asset and xxh64(obj.lower()).hexdigest() not in files_in_wad:
+    #     log(f"Repathing {obj} to ASSETS/rep/ in wad", "error",indent=True)
+    # else:
+    obj = obj.replace("assets/", "ASSETS/", 1)
+    return obj
+
+def extract_hashes(obj, champion=None):
+    if obj.find(" ") == -1 and obj.find(".") != -1:
+        hash = xxh64(obj.lower()).hexdigest()
+        if hash not in hashes_in_bin.keys():
+            hashes_in_bin[hash] = obj.lower()
+            # log("Found hash: " + hash + " for " + obj, indent=True)
+    return obj
+
+def traverse_bin(obj, function=rename, champion=None):
+    if isinstance(obj, str):
+        return function(obj)
+
+    elif isinstance(obj, list):
+        for i in range(len(obj)):
+            obj[i] = traverse_bin(obj[i], function, champion)
+        return obj
+    
+    elif isinstance(obj, BINField):
+        if obj.type == BINType.String:
+            obj.data = function(obj.data, champion)
+        elif obj.type == BINType.List:
+            for i in range(len(obj.data)):
+                if hasattr(obj.data[i], 'data'):
+                    obj.data[i].data = traverse_bin(obj.data[i].data, function, champion)
+                else:
+                    obj.data[i] = traverse_bin(obj.data[i], function, champion)
+        elif obj.type in (BINType.List2, BINType.Embed, BINType.Pointer):
+            obj.data = traverse_bin(obj.data, function, champion)
+
+    return obj
+
+
+def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
+    if is_standalone:
+        log(f"Parsing BIN file: {bin_path}","info")
     for entry in bin_file.entries:
         if entry.type == cached_bin['SkinCharacterDataProperties']:
-            is_champion = False
-            for field in entry.data:
-                if field.hash == cached_bin['IconSquare']:
-                    for char in champions.keys():
-                        if len(field.data.lower().split(f"/{char}/")) > 1:
-                            is_champion = True
-                            champion = char
-                            break
-                if is_champion:
-                    break
+            has_hp_bar = False
+            has_hp_style = False
+            UnitHealthBarStyle = BINField()
+            UnitHealthBarStyle.hash = cached_bin['UnitHealthBarStyle']
+            UnitHealthBarStyle.type = BINType.U8
+            UnitHealthBarStyle.data = health_bars.get(champion, default_hp_style)
+            
+            for HealthBarData in entry.data:
+                if HealthBarData.hash == cached_bin['HealthBarData']:
+                    has_hp_bar = True
+                    new_data = []
                     
-            if is_champion:
-                has_hp_bar = False
-                has_hp_style = False
-                UnitHealthBarStyle = BINField()
-                UnitHealthBarStyle.hash = cached_bin['UnitHealthBarStyle']
-                UnitHealthBarStyle.type = BINType.U8
-                UnitHealthBarStyle.data = champions.get(champion, default_health_bar_style)
-                
-                for HealthBarData in entry.data:
-                    if HealthBarData.hash == cached_bin['HealthBarData']:
-                        has_hp_bar = True
-                        new_data = []
-                        
-                        for field in HealthBarData.data:
-                            if field.hash == cached_bin['UnitHealthBarStyle']:
-                                has_hp_style = True
-                                field.data = champions.get(champion, default_health_bar_style)
-                            if any(field.hash == data.hash for data in new_data):
-                                continue
-                            else:
-                                new_data.append(field)
-                        if has_hp_style:
-                            HealthBarData.data = new_data
+                    for field in HealthBarData.data:
+                        if field.hash == cached_bin['UnitHealthBarStyle']:
+                            has_hp_style = True
+                            field.data = health_bars.get(champion, default_hp_style)
+                        if any(field.hash == data.hash for data in new_data):
+                            continue
                         else:
-                            HealthBarData.data.append(UnitHealthBarStyle)
-                            
-                if has_hp_bar == False:
-                    HealthBarData = BINField()
-                    HealthBarData.hash = cached_bin['HealthBarData']
-                    HealthBarData.type = BINType.Embed
-                    HealthBarData.hash_type = cached_bin['CharacterHealthBarDataRecord']
-                    HealthBarData.data = [UnitHealthBarStyle]
-                    entry.data.append(HealthBarData)
+                            new_data.append(field)
+                    if has_hp_style:
+                        HealthBarData.data = new_data
+                        log(f"Set health bar for {bColor.OKGREEN}{champion.upper()}{bColor.ENDC} with style {UnitHealthBarStyle.data}", indent=True)
+                    else:
+                        HealthBarData.data.append(UnitHealthBarStyle)
+                        
+            if has_hp_bar == False:
+                HealthBarData = BINField()
+                HealthBarData.hash = cached_bin['HealthBarData']
+                HealthBarData.type = BINType.Embed
+                HealthBarData.hash_type = cached_bin['CharacterHealthBarDataRecord']
+                HealthBarData.data = [UnitHealthBarStyle]
+                entry.data.append(HealthBarData)
+                log(f"Set health bar to {champion} with style {UnitHealthBarStyle.data}", indent=True)
                             
                             
         if entry.type == cached_bin['StaticMaterialDef']:
@@ -220,73 +324,23 @@ def parse_bin(bin_path, bin_file, is_standalone=False):
                             
     if not(is_standalone):
         for entry in bin_file.entries:
-            if entry.type == cached_bin['SpellObject'] or entry.type == cached_bin['ResourceResolver']:
-                continue
             for item in entry.data:
                 item.data = traverse_bin(item.data)             
     return bin_file
 
-
-def rename(obj):
-    pattern = re.compile(r"assets/(characters/)", re.IGNORECASE)
-    is_affected_asset = (re.match(pattern, obj) is not None)
-    
-    if obj.endswith(".dds"):
-        obj = obj.lower()
-        if is_affected_asset and (xxh64(obj).hexdigest() not in files_in_wad):
-            ext = re.compile(r"\.dds$", re.IGNORECASE)
-            obj = re.sub(ext, ".tex", obj)
-        elif is_affected_asset and (xxh64(obj.replace(r".dds$", ".tex")).hexdigest() in files_in_wad):
-            pass
-    elif obj.endswith(".tex") and (xxh64(obj).hexdigest() not in files_in_wad):
-        obj = obj.lower()
-        ext = re.compile(r"\.tex$", re.IGNORECASE)
-        newobj = re.sub(ext, ".dds", obj)
-        if is_affected_asset and (xxh64(newobj).hexdigest() in files_in_wad):
-            obj = newobj
-    if  obj.startswith("assets/"):
-        return obj.replace("assets/", "ASSETS/", 1)
-    return obj
-
-def find_missing_hashes(obj):
-    obj = obj.lower()
-    if xxh64(obj).hexdigest() not in hashes and obj.find(".") != -1:
-        hashes[xxh64(obj).hexdigest()] = obj
-        if obj.endswith(".dds"):
-            hashes[xxh64(obj).hexdigest()] = obj.replace(".dds", ".tex")
-            print(f"[INFO] New hash found: {xxh64(obj).hexdigest()} -> {obj.replace('.dds', '.tex')}")
-        elif obj.endswith(".tex"):
-            hashes[xxh64(obj).hexdigest()] = obj.replace(".tex", ".dds")
-            print(f"[INFO] New hash found: {xxh64(obj).hexdigest()} -> {obj.replace('.tex', '.dds')}")
-        print(f"[INFO] New hash found: {xxh64(obj).hexdigest()} -> {obj}")
-    return obj
-#recursively search for string type values
-def traverse_bin(obj, function=rename):
-    if isinstance(obj, str):
-        return function(obj)
-
-    if isinstance(obj, list):
-        for i in range(len(obj)):
-            obj[i] = traverse_bin(obj[i], function)
-        return obj
-    
-    if isinstance(obj, BINField):
-        if obj.type == BINType.String:
-            obj.data = function(obj.data)
-        elif obj.type == BINType.List:
-            for i in range(len(obj.data)):
-                if hasattr(obj.data[i], 'data'):
-                    obj.data[i].data = traverse_bin(obj.data[i].data, function)
-                else:
-                    obj.data[i] = traverse_bin(obj.data[i], function)
-        elif obj.type in (BINType.List2, BINType.Embed, BINType.Pointer):
-            obj.data = traverse_bin(obj.data, function)
-    return obj
-
-def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
+def parse_wad(wad_path: str, wad_name: str, standalone=False):
+    log(f"Parsing WAD file: {wad_name}", "info", indent=(not standalone))
     wad_file = WAD()
     wad_file.read(wad_path)
     chunks_dict = {}
+
+    # Extract champion name from wad_name, e.g. "WAD/TahmKench.wad.client"
+    this_champion = None
+    wad_basename = path.basename(wad_name).lower()
+    for champ in champions:
+        if champ in wad_basename and wad_basename.count(".") == 2:
+            this_champion = champ
+            break
 
 
     with wad_file.stream(wad_path, "rb+") as bs:
@@ -294,98 +348,121 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
         has_bin = False
         
         # Initialize inside the stream context
-        asset_pattern = re.compile(r"assets/(characters/)", re.IGNORECASE)
+        # Match any champion except this_champion
+        shared_regex = re.compile(
+            # rf"^ASSETS/(?!characters/{re.escape(this_champion)})(shared|perks|particles|maps|spells)?.+\.", re.IGNORECASE
+            rf"^ASSETS/(characters|shared|perks|particles|maps|spells)?.+\.", re.IGNORECASE
+        ) if this_champion else None
         
         # Inner function to find hash data
         def find_hash_data():
+            nonlocal has_bin
             # Collect hash data from bin files
             for chunk in wad_file.chunks:
-                this_string = hashes.get(chunk.hash, None)
+                this_string = hashes.get(chunk.hash, chunk.hash)
                 if this_string is not None:
-                    if this_string.endswith(".bin"):
+                    if not this_string.endswith(".bin"):
                         continue
                 chunk.read_data(bs)
                 if chunk.extension == "bin":
-                    hash_count = len(hashes.keys())
+                    has_bin = True
+                    hash_count = len(hashes_in_bin)
                     bin_file = BIN()
                     bin_file.read(path="", raw=chunk.data)
                     for entry in bin_file.entries:
                         for item in entry.data:
-                            traverse_bin(item.data, find_missing_hashes)
-                    print(f'Found {len(hashes.keys()) - hash_count} new hashes in {chunk.hash}')
-                    
-        
+                            traverse_bin(item.data, extract_hashes)
+                    log(f'Found {len(hashes_in_bin) - hash_count} hashes in {this_string}',indent=True)
+            log(f"Files in WAD: {len(wad_file.chunks)}", "warn", indent=True)
+            log(f"Files mentioned in Bin: {len(hashes_in_bin)}", "warn", indent=True)
+
         # Inner function to convert DDS to TEX
-        def convert_dds_to_tex():
+        def transform_files():
+            count = 0
             for chunk in wad_file.chunks:
                 chunk.read_data(bs)
-                if chunk.extension == "dds":
-                    try:
-                        this_string = hashes.get(chunk.hash, None)
-                        if this_string is None:
-                            print(f'[OK  ] File Hash: "{chunk.hash}" not found in hashes, skipping conversion')
-                            files_in_wad.add(chunk.hash)
-                            continue
-                        if this_string.split("/")[-1].startswith("2x") or this_string.split("/")[-1].startswith("4x"):
-                            continue
-                        if "hud/icons2d" in this_string:
-                            files_in_wad.add(chunk.hash)
-                            continue
-                        if re.match(asset_pattern, this_string) is None and "/hud/" not in this_string:
-                            files_in_wad.add(chunk.hash)
-                            continue
-                        print(f'[OK  ]Converting {this_string} to TEX format')
-                        # write temp file
-                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dds")
-                        temp_file.write(chunk.data)
-                        temp_file.close()
                 
-                        command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name]
-                        subprocess.run(command, capture_output=True, text=True)
+                this_string = hashes.get(chunk.hash, hashes_in_bin.get(chunk.hash, chunk.hash))
+                
+                # if shared_regex and re.match(shared_regex, this_string) and this_string.startswith("assets/"):
+                #     # log(f"Relocating: {this_string.replace('assets/', f'ASSETS{bColor.OKBLUE}/rep/{bColor.ENDC}', 1)}", indent=True)
+                #     chunk.hash = xxh64(this_string.replace("assets/","assets/rep/")).hexdigest()
+                #     this_string = this_string.replace("assets/", "assets/rep/", 1)
+                #     hashes_in_bin[chunk.hash] = this_string.lower()
+                # ! if file is not mentioned in bin convert it to tex
+                # if chunk.extension == "dds" and hashes.get(xxh64(this_string.replace(".dds", ".tex")), None) :
+                #     this_string = hashes[xxh64(this_string.replace(".dds", ".tex"))]
+                #     if this_string in files_in_wad:
+                #         log(f"File {this_string} already exists in WAD, skipping conversion", indent=True)
+                #         continue
+                # if chunk.extension == "dds" and chunk.hash not in hashes_in_bin.keys():
+                #     try:
+                #         if this_string == chunk.hash:
+                #             continue
+                #         if this_string.split("/")[-1].startswith("2x") or this_string.split("/")[-1].startswith("4x"):
+                #             files_in_wad.add(chunk.hash)
+                #             continue
+                #         if "/hud/" in this_string:
+                #             files_in_wad.add(chunk.hash)
+                #             continue
                         
+                #         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dds")
+                #         temp_file.write(chunk.data)
+                #         temp_file.close()
+
+                #         command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name]
+                #         subprocess.run(command, capture_output=True, text=True)
                         
-                        with open(temp_file.name, "rb") as f:
-                            dds_header = f.read(128)
+                #         with open(temp_file.name, "rb") as f:
+                #             dds_header = f.read(128)
                             
-                        width = int.from_bytes(dds_header[12:16], 'little')
-                        height = int.from_bytes(dds_header[16:20], 'little')
-                        print(f"[INFO] Width: {width}, Height: {height}")
-                        if width % 4 != 0 or height % 4 != 0:
-                            print(f"[WARN] {this_string} has non-power-of-4 dimensions ({width}x{height}), skipping conversion")
-                            files_in_wad.add(chunk.hash)
-                            continue
-                        # Find the output file (texconv outputs to same dir with _BC3_UNORM.dds suffix)
-                        with open(temp_file.name, "rb") as out_f:
-                            out_buffer = out_f.read()
+                #         width = int.from_bytes(dds_header[12:16], 'little')
+                #         height = int.from_bytes(dds_header[16:20], 'little')
                         
-                        newdata = stream2tex(out_buffer)
-                        newpath = this_string.replace(".dds",".tex")
-                        # print(f"{this_string} -> {newpath}")
-                        newhash = xxh64(newpath).hexdigest()
-                        hashes[newhash] = newpath
-                        chunk.hash = newhash
-                        chunk.extension = "tex"
-                        chunk.data = newdata
-                        files_in_wad.add(chunk.hash)
-                            
-                    except Exception as e:
-                        print(f'[Err ] File Hash: "{chunk.hash}" Unknown error: {e}')
-                        files_in_wad.add(chunk.hash)
-                elif chunk.extension == "tex":
-                    files_in_wad.add(chunk.hash)
-        
+                        
+                #         if width % 4 != 0 or height % 4 != 0:
+                #             log(f"{this_string} has non-power-of-4 dimensions ({width}x{height}), skipping conversion","warning", indent=True)
+                #             files_in_wad.add(chunk.hash)
+                #             continue
+                        
+                #         with open(temp_file.name, "rb") as out_f:
+                #             out_buffer = out_f.read()
+                        
+                        
+                #         newdata = stream2tex(out_buffer)
+                #         newpath = this_string.replace(".dds",".tex")
+                #         log(f"Converting: {newpath.replace('.tex',f'{bColor.FAIL}.dds{bColor.ENDC}{bColor.OKGREEN}.tex{bColor.ENDC}')}", indent=True)
+                #         newhash = xxh64(newpath).hexdigest()
+                        
+                #         hashes[newhash] = newpath
+                #         chunk.hash = newhash
+                #         chunk.extension = "tex"
+                #         chunk.data = newdata
+                #         files_in_wad.add(chunk.hash)
+                #         count += 1
+                #     except Exception as e:
+                #         log(f'File Hash: "{chunk.hash}" Unknown error: {e}',"error", indent=True)
+                #         files_in_wad.add(chunk.hash)
+                #     continue
+                
+                # else:
+                #     log(f"IDK: {this_string}", indent=True)
+                #     files_in_wad.add(chunk.hash)
+                
+            log(f"Converted {count} DDS files to TEX", indent=True, type="info")
+
         # Inner function to process bin files
         def process_bin_files():
             for chunk in wad_file.chunks:
                 if chunk.extension == "bnk":
                     this_string = hashes.get(chunk.hash, "no")
                     if this_string == "no":
-                        print("[INFO] No hash found for this bnk file, skipping")
+                        log(f"No path found for this bnk file {chunk.hash}, skipping", "warning", indent=True)
                     elif this_string.endswith("sfx_events.bnk"):
                         new_string = this_string.replace("sfx_events.bnk", "sfx_events.old.bnk")
                         hashes[chunk.hash] = new_string
                         chunk.hash = xxh64(new_string).hexdigest()
-                        print(f'[INFO] Renaming {this_string} to {new_string}')
+                        log(f'Renaming:   {new_string.replace(".old.", f"{bColor.OKBLUE}.old.{bColor.ENDC}")}', "info")
                     elif this_string.endswith("vo_events.bnk"):
                         pattern = re.compile(r"^([a-z]+)\.[a-z]{2}_[A-Z]{2}\.wad\.client$", re.IGNORECASE)
                         # in list directory of league_path find matching
@@ -405,161 +482,132 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False) -> bytes:
                                         org_chunk.read_data(f)
                                         chunk.data = org_chunk.data
                                         print(f'[OK  ] Copying VO events from latest league: {this_string}')
+                                        
                 elif chunk.extension == "bin":
                     try:
-                        for champ_name in champions.keys():
-                            if chunk.hash == xxh64(f"data/characters/{champ_name}/skins/root.bin").hexdigest() \
-                                or chunk.hash == xxh64(f"data/characters/{champ_name}/{champ_name}.bin").hexdigest():
-                                continue
                         this_string = hashes.get(chunk.hash, None)
                         if this_string:
-                            print(f'[OK  ] Processing BIN file: {this_string}')
+                            log(f'Processing BIN file: {this_string}', indent=True, type="info")
                         bin_file = BIN()
                         bin_file.read(path="", raw=chunk.data)
-                        bin_file = parse_bin(chunk.hash, bin_file)
+                        bin_file = parse_bin(chunk.hash, bin_file, is_standalone=False, champion=this_champion)
                         chunk.data = bin_file.write(path="", raw=True)
                     except Exception as e:
                         print(f'File Hash: "{chunk.hash}" THROWN AN EXCEPTION {e}')
+                
                 chunks_dict[chunk.hash] = chunk.data
+                
         
         # Execute core functions
         find_hash_data()
-        
-        # Now wrap conversion process in progress bar if in standalone mode
-        if standalone:
-            chunks_to_process = [c for c in wad_file.chunks if c.extension in ["dds", "bin", "tex"]]
-            total_chunks = len(chunks_to_process)
-            
-            with Progress(
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TimeRemainingColumn(),
-            ) as progress:
-                task = progress.add_task(f"[cyan]Processing {path.basename(wad_name)}...", total=total_chunks + 1)
-                
-                convert_dds_to_tex()
-                progress.update(task, advance=total_chunks+1)
-                
-                bin_task = progress.add_task("[cyan]Processing BIN files...", total=1)
-                process_bin_files()
-                progress.update(bin_task, advance=1)
-        else:
-            convert_dds_to_tex()
-            process_bin_files()
+        transform_files()
+        process_bin_files()
             
     # Create the final WAD
     wad = WAD()
 
-    # Remove specific bin/subchunktoc chunks if present
-    for champ_name in champions.keys():
+    #Remove specific bin/subchunktoc chunks if present
+    for champ_name in champions:
         for key in (
             xxh64(f"data/characters/{champ_name}/skins/root.bin").hexdigest(),
             xxh64(f"data/characters/{champ_name}/{champ_name}.bin").hexdigest(),
             xxh64(f"data/final/champions/{champ_name}.wad.subchunktoc").hexdigest(),
-            
         ):
+            if key in chunks_dict:
+                log(f"Deleting: {key} from WAD", indent=True)
             chunks_dict.pop(key, None)
-    for hash in files_in_wad:
-        this_string = hashes.get(hash, "").lower()
-        if this_string.endswith(".dds"):
-            continue
-        if path.basename(this_string).startswith("2x") or path.basename(this_string).startswith("4x"):
-            chunks_dict.pop(hash, None)
+            
+    # for hash in files_in_wad:
+    #     this_string = hashes.get(hash, "").lower()
+    #     if this_string.endswith(".dds"):
+    #         continue
+    #     if path.basename(this_string).startswith("2x") or path.basename(this_string).startswith("4x"):
+    #         chunks_dict.pop(hash, None)
             
 
     wad.chunks = [WADChunk.default() for _ in range(len(chunks_dict))]
     
-    
-
     # Write the final WAD, with progress bar if standalone
-    if standalone:
-        with Progress(
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        ) as progress:
-            write_task = progress.add_task("[purple]Writing WAD file...", total=len(chunks_dict))
-            with wad.stream("", "rb+", raw=wad.write("", raw=True)) as bs:
-                for idx, (chunk_hash, chunk_data) in enumerate(chunks_dict.items()):
-                    wad.chunks[idx].write_data(
-                        bs,
-                        idx,
-                        chunk_hash,
-                        chunk_data,
-                        previous_chunks=(wad.chunks[i] for i in range(idx))
-                    )
-                    wad.chunks[idx].free_data()
-                    progress.update(write_task, advance=1)
-                
-                final_bytes = bs.raw()
-    else:
-        with wad.stream("", "rb+", raw=wad.write("", raw=True)) as bs:
-            for idx, (chunk_hash, chunk_data) in enumerate(chunks_dict.items()):
-                wad.chunks[idx].write_data(
-                    bs,
-                    idx,
-                    chunk_hash,
-                    chunk_data,
-                    previous_chunks=(wad.chunks[i] for i in range(idx))
-                )
-                wad.chunks[idx].free_data()
-            
-            final_bytes = bs.raw()
-
+    
+    with wad.stream("", "rb+", raw=wad.write("", raw=True)) as bs:
+        for idx, (chunk_hash, chunk_data) in enumerate(chunks_dict.items()):
+            wad.chunks[idx].write_data(
+                bs,
+                idx,
+                chunk_hash,
+                chunk_data,
+                previous_chunks=(wad.chunks[i] for i in range(idx))
+            )
+            wad.chunks[idx].free_data()
+        
+        final_bytes = bs.raw()
     return final_bytes
 
-def parse_fantome(fantome_path: str) -> None:
-    with open(fantome_path, 'rb') as file:
-        zip_file = ZipFile(file, 'r')
-        zip_name_list = zip_file.namelist()
+    
+def parse_fantome(fantome_path):
+    log(f"Parsing Fantome file: {fantome_path}","info")
+    try:
+        with open(fantome_path, 'rb') as file:
+            zip_file = ZipFile(file, 'r')
+            zip_name_list = zip_file.namelist()
 
-        # Check if there's at least a wad file to parse
-        if (not any(x.lower().endswith('.wad.client') for x in zip_name_list)):
-            # if doesnt include "META/info.json"
-            print("No WADs found in this fantome.")
-            zip_file.close()
-            return
+            # Check if there's at least a wad file to parse
+            if (not any(x.lower().endswith('.wad.client') for x in zip_name_list)):
+                # if doesnt include "META/info.json"
+                log("No WADs found in this fantome.", "warning", indent=True)
+                zip_file.close()
+                return
 
-        wads_dict, final_wads_dict, extra_files = {}, {}, {}
+            wads_dict, final_wads_dict, extra_files = {}, {}, {}
 
-        for name in zip_name_list:
-            if name.lower().endswith('.wad.client'):
-                with zip_file.open(name, 'r') as f:
-                    wads_dict[name] = f.read()
-            else:
-                with zip_file.open(name, 'r') as f:
-                    extra_files[name] = f.read()
-                    if name.endswith('META/info.json'):
-                        data = json.loads(extra_files[name])
-                        Name = data['Name']
-                        author = data['Author']
-                        print(f'Fixing "{Name}" by "{author}"')
+            for name in zip_name_list:
+                if name.lower().endswith('.wad.client'):
+                    with zip_file.open(name, 'r') as f:
+                        wads_dict[name] = f.read()
+                else:
+                    with zip_file.open(name, 'r') as f:
+                        extra_files[name] = f.read()
+                        if name.endswith('META/info.json'):
+                            data = json.loads(extra_files[name])
+                            Name = data['Name']
+                            author = data['Author']
+                            log(f'Fixing "{Name}" by "{author}"', indent=True)
+    except Exception as e:
+        exit_with_input(f"Failed to read Fantome: {fantome_path} {str(e)}", type="error")
+        
 
     # Reuse parse_wad by writing the WAD bytes to a temp file
-    
-    for wad_name, wad_bytes in wads_dict.items():
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wad.client") as tmp_file:
-            tmp_file.write(wad_bytes)
-            tmp_file.flush() 
-            final_wads_dict[wad_name] = parse_wad(tmp_file.name, wad_name,True)
 
-    final_zip_buffer = BytesIO()
-    final_zip_file = ZipFile(final_zip_buffer, 'w', ZIP_DEFLATED, False)
+    try:
+            
+        for wad_name, wad_bytes in wads_dict.items():
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wad.client") as tmp_file:
+                tmp_file.write(wad_bytes)
+                tmp_file.flush() 
+                final_wads_dict[wad_name] = parse_wad(tmp_file.name, wad_name)
 
-    for final_wad_name, final_wad_bytes in final_wads_dict.items():
-        final_zip_file.writestr(final_wad_name, final_wad_bytes)
-    for extra_name, extra_byte in extra_files.items():
-        final_zip_file.writestr(extra_name, extra_byte)
+        final_zip_buffer = BytesIO()
+        final_zip_file = ZipFile(final_zip_buffer, 'w', ZIP_DEFLATED, False)
 
-    
-    zip_file.close()
-    final_zip_file.close()
+        for final_wad_name, final_wad_bytes in final_wads_dict.items():
+            final_zip_file.writestr(final_wad_name, final_wad_bytes)
+        for extra_name, extra_byte in extra_files.items():
+            final_zip_file.writestr(extra_name, extra_byte)
 
-    with open(fantome_path, 'wb') as file:
-        print(f"Writing Fantome: {fantome_path}")
-        file.write(final_zip_buffer.getvalue())
+        
+        zip_file.close()
+        final_zip_file.close()
+    except Exception as e:
+        exit_with_input(f"Failed to process WADs in Fantome: {fantome_path} {str(e)}", type="error")
 
+    try:
+        with open(fantome_path, 'wb') as file:
+            log(f"Writing Fantome: {fantome_path}", type="success")
+            file.write(final_zip_buffer.getvalue())
+    except Exception as e:
+        exit_with_input(f"Failed to write Fantome: {fantome_path} {str(e)}", type="error")
+
+input_path = argv[1]
 if path.isfile(input_path) and input_path.endswith('.bin'): # input is a bin file
     try:
         bin_file = BIN()
@@ -567,27 +615,24 @@ if path.isfile(input_path) and input_path.endswith('.bin'): # input is a bin fil
         bin_file = parse_bin(input_path, bin_file, True)
         bin_file.write(input_path)
     except Exception as e:
-        print(e, '\nSomething went wrong')
-        input()
+        exit_with_input(f"Failed to parse BIN file: {input_path} {str(e)}", type="error")
 
 elif path.isfile(input_path) and input_path.endswith('.wad.client'): # input is a wad file
     try:
-        print(f"Parsing Wad: {input_path}...")
-        print(path.join("WAD",path.basename(input_path)))
+        log(f"Parsing Wad: {input_path}...")
+        log(path.join("WAD",path.basename(input_path)))
         wad_bytes = parse_wad(input_path, path.basename(input_path), standalone=True)
-        print("Writing .wad file")
+        log("Writing .wad file")
         with open(input_path, 'wb') as f:
             f.write(wad_bytes)
     except Exception as e:
-        print(e, '\nSomething went wrong')
-        input()
+        exit_with_input(f"Failed to parse WAD file: {input_path} {str(e)}", type="error")
 
 elif path.isfile(input_path) and (input_path.endswith('.fantome') or input_path.endswith('.zip')): # input is a zip file
     try:
         parse_fantome(input_path)
     except Exception as e:
-        print(e, '\nSomething went wrong')
-        input()
+        exit_with_input(f"Failed to parse Fantome file: {input_path} {str(e)}", type="error")
 
 elif path.isdir(input_path): # input is a directory
     from os import walk
@@ -595,10 +640,9 @@ elif path.isdir(input_path): # input is a directory
     wad_files = []
     fantome_files = []
     is_wad_folder = False
-    
-    #if input_path is a folder named "installed"
-    if path.basename(input_path) == "installed":
-        cslol_path = wait_ps("cslol-manager.exe", True)
+
+    if path.basename(input_path) == "cslol-manager":
+        exit_with_input('Don\'t run this on cslol-manager, drag and drop "installed" folder instead or a file', type="error")
 
     for root, dirs, files in walk(input_path):
         for file in files:
@@ -622,44 +666,17 @@ elif path.isdir(input_path): # input is a directory
                 bin_file = parse_bin(file_path, bin_file, False)
                 bin_file.write(file_path)
             except Exception as e:
-                print(e, '\nSomething went wrong')
+                log(str(e), type="error")
                 input()
         pass
     else:
-        count = len(wad_files) + len(fantome_files)
-        print(f"Processing {len(wad_files)} wad files and {len(fantome_files)} fantome files")
-        
-        # Create a Rich progress bar
-        with Progress(
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
-        ) as progress:
-            task = progress.add_task("[cyan]Processing files...", total=count)
-            
-            for file_path in wad_files:
-                metadata = path.join(path.dirname(file_path), "../META/info.json")
-                if path.exists(metadata):
-                    with open(metadata, 'r') as f:
-                        data = json.load(f)
-                        print(f"Processing {data['Name']} by {data['Author']}")
-                
-                wad_bytes = parse_wad(file_path, path.basename(file_path))
-                with open(file_path, 'wb') as f:
-                    f.write(wad_bytes)
-                progress.update(task, advance=1)
-            
-            for file_path in fantome_files:
-                parse_fantome(file_path)
-                progress.update(task, advance=1)
-    
-    if cslol_path != "":
-        import subprocess
-        subprocess.Popen(cslol_path)
-else:
-    print("Couldn't find any files to fix")
-    input()
+        for file_path in wad_files:
+            wad_bytes = parse_wad(file_path, path.basename(file_path))
+            with open(file_path, 'wb') as f:
+                f.write(wad_bytes)
 
-print("Done!")
+        for file_path in fantome_files:
+            parse_fantome(file_path)
+    
+else:
+    exit_with_input("Couldn't find any files to fix", type="warning")

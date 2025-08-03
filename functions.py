@@ -157,3 +157,4 @@ def stream2tex(chunk_data):
         tex_bytes.extend(block_data)
     
     return bytes(tex_bytes)
+
