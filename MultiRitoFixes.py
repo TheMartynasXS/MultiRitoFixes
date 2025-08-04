@@ -12,8 +12,7 @@ import json
 from functions import stream2tex 
 import subprocess
 from colorama import init, Fore, Style
-
-import time
+import shutil
 # check if process called "cslol-manager.exe" is running
 import psutil
 import msvcrt
@@ -48,8 +47,8 @@ def log(message = "",type = "text", indent = False):
         print(f"[INF] {message}")
     elif type == "info":
         print(f"{bColor.OKBLUE}[INF] {message}{bColor.ENDC}")
-    elif type == "error":
-        print(f"{bColor.FAIL}[err] {message}{bColor.ENDC}")
+    elif type == "error" or type == "err":
+        print(f"{bColor.FAIL}[ERR] {message}{bColor.ENDC}")
     elif type == "warning" or type == "warn":
         print(f"{bColor.WARNING}[WRN] {message}{bColor.ENDC}")
 
@@ -101,9 +100,9 @@ def setup():
     
     fixer_cache_path = path.join(temp_dir, "multiritofixes", "config.ini")
     
-    if not path.exists(path.join(path.dirname(argv[0]), "texconv.exe")):
+    if not path.exists(path.join(path.dirname(argv[0]), "texconv.exe")) and not shutil.which("texconv.exe"):
         log("Texconv.exe not found in the current directory. Download and place it in the same folder as this program.","error")
-        exit_with_input("Texconv.exe not found", type="error")
+        exit_with_input("https://github.com/Microsoft/DirectXTex/releases/latest/download/texconv.exe", type="error")
 
     if not path.exists(fixer_cache_path):
         log("Fixer cache not found, creating new one...")
@@ -204,12 +203,12 @@ def rename(obj, champion=None):
     
     if is_affected_asset:
         if (xxh64(obj.lower()).hexdigest() not in files_in_wad):
-            if( obj.endswith(".dds")):
+            if obj.endswith(".dds") and hashes.get(xxh64(obj.replace(".dds", ".tex").lower()).hexdigest(), None) != None:
                 text_line = obj.replace(".dds", "")
                 log(f"Renaming:   {text_line}{bColor.FAIL}.dds{bColor.ENDC}{bColor.OKGREEN}.tex{bColor.ENDC}", indent=True)
                 obj = obj.replace(".dds", ".tex")
             else:
-                # log("didnt do shit")
+                log(f"Skipping (doesnt have .tex variant): {obj}", "warn", indent=True)
                 pass
                 
     # is_shared_asset = (re.match(shared_regex, obj) is not None) if shared_regex else False
@@ -227,7 +226,6 @@ def extract_hashes(obj, champion=None):
         hash = xxh64(obj.lower()).hexdigest()
         if hash not in hashes_in_bin.keys():
             hashes_in_bin[hash] = obj.lower()
-            # log("Found hash: " + hash + " for " + obj, indent=True)
     return obj
 
 def traverse_bin(obj, function=rename, champion=None):
@@ -250,7 +248,10 @@ def traverse_bin(obj, function=rename, champion=None):
                     obj.data[i] = traverse_bin(obj.data[i], function, champion)
         elif obj.type in (BINType.List2, BINType.Embed, BINType.Pointer):
             obj.data = traverse_bin(obj.data, function, champion)
-
+    elif isinstance(obj, tuple):
+        #this is a pair of dash and BinField traverse binfield part
+        if len(obj) == 2 and isinstance(obj[1], BINField):
+            obj = (obj[0], traverse_bin(obj[1], function, champion))
     return obj
 
 
@@ -382,73 +383,66 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
             for chunk in wad_file.chunks:
                 chunk.read_data(bs)
                 
-                this_string = hashes.get(chunk.hash, hashes_in_bin.get(chunk.hash, chunk.hash))
+                is_in_bin = (chunk.hash in hashes_in_bin.keys())
                 
-                # if shared_regex and re.match(shared_regex, this_string) and this_string.startswith("assets/"):
-                #     # log(f"Relocating: {this_string.replace('assets/', f'ASSETS{bColor.OKBLUE}/rep/{bColor.ENDC}', 1)}", indent=True)
-                #     chunk.hash = xxh64(this_string.replace("assets/","assets/rep/")).hexdigest()
-                #     this_string = this_string.replace("assets/", "assets/rep/", 1)
-                #     hashes_in_bin[chunk.hash] = this_string.lower()
-                # ! if file is not mentioned in bin convert it to tex
-                # if chunk.extension == "dds" and hashes.get(xxh64(this_string.replace(".dds", ".tex")), None) :
-                #     this_string = hashes[xxh64(this_string.replace(".dds", ".tex"))]
-                #     if this_string in files_in_wad:
-                #         log(f"File {this_string} already exists in WAD, skipping conversion", indent=True)
-                #         continue
-                # if chunk.extension == "dds" and chunk.hash not in hashes_in_bin.keys():
-                #     try:
-                #         if this_string == chunk.hash:
-                #             continue
-                #         if this_string.split("/")[-1].startswith("2x") or this_string.split("/")[-1].startswith("4x"):
-                #             files_in_wad.add(chunk.hash)
-                #             continue
-                #         if "/hud/" in this_string:
-                #             files_in_wad.add(chunk.hash)
-                #             continue
-                        
-                #         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dds")
-                #         temp_file.write(chunk.data)
-                #         temp_file.close()
+                this_string = hashes_in_bin.get(chunk.hash, hashes.get(chunk.hash, chunk.hash))
+                # check if file is dds and if it is in bin or is not known hash
+                if this_string == chunk.hash:
+                    # log(f"{this_string}", indent=True)
+                    files_in_wad.add(chunk.hash)
+                elif chunk.extension == "dds" and is_in_bin:
+                    files_in_wad.add(chunk.hash)
+                    # log(f"{this_string}" ,"error", indent=True)
+                    pass
+                elif chunk.extension == "dds" and not is_in_bin:
+                    if path.basename(this_string).startswith("2x") or path.basename(this_string).startswith("4x"):
+                        files_in_wad.add(chunk.hash)
+                        log(f"Skipping: {this_string} its a mipmap", indent=True)
+                        continue
+                    try:
+                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dds")
+                        temp_file.write(chunk.data)
+                        temp_file.close()
 
-                #         command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name]
-                #         subprocess.run(command, capture_output=True, text=True)
+                        command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name]
+                        subprocess.run(command, capture_output=True, text=True)
                         
-                #         with open(temp_file.name, "rb") as f:
-                #             dds_header = f.read(128)
+                        with open(temp_file.name, "rb") as f:
+                            dds_header = f.read(128)
                             
-                #         width = int.from_bytes(dds_header[12:16], 'little')
-                #         height = int.from_bytes(dds_header[16:20], 'little')
+                        width = int.from_bytes(dds_header[12:16], 'little')
+                        height = int.from_bytes(dds_header[16:20], 'little')
                         
                         
-                #         if width % 4 != 0 or height % 4 != 0:
-                #             log(f"{this_string} has non-power-of-4 dimensions ({width}x{height}), skipping conversion","warning", indent=True)
-                #             files_in_wad.add(chunk.hash)
-                #             continue
+                        if width % 4 != 0 or height % 4 != 0:
+                            log(f"{this_string} has non-power-of-4 dimensions ({width}x{height}), skipping conversion","warning", indent=True)
+                            files_in_wad.add(chunk.hash)
+                            continue
                         
-                #         with open(temp_file.name, "rb") as out_f:
-                #             out_buffer = out_f.read()
+                        with open(temp_file.name, "rb") as out_f:
+                            out_buffer = out_f.read()
                         
                         
-                #         newdata = stream2tex(out_buffer)
-                #         newpath = this_string.replace(".dds",".tex")
-                #         log(f"Converting: {newpath.replace('.tex',f'{bColor.FAIL}.dds{bColor.ENDC}{bColor.OKGREEN}.tex{bColor.ENDC}')}", indent=True)
-                #         newhash = xxh64(newpath).hexdigest()
+                        newdata = stream2tex(out_buffer)
+                        newpath = this_string.replace(".dds",".tex")
+                        log(f"Converting: {newpath.replace('.tex',f'{bColor.FAIL}.dds{bColor.ENDC}{bColor.OKGREEN}.tex{bColor.ENDC}')}", indent=True)
+                        newhash = xxh64(newpath).hexdigest()
                         
-                #         hashes[newhash] = newpath
-                #         chunk.hash = newhash
-                #         chunk.extension = "tex"
-                #         chunk.data = newdata
-                #         files_in_wad.add(chunk.hash)
-                #         count += 1
-                #     except Exception as e:
-                #         log(f'File Hash: "{chunk.hash}" Unknown error: {e}',"error", indent=True)
-                #         files_in_wad.add(chunk.hash)
-                #     continue
-                
-                # else:
-                #     log(f"IDK: {this_string}", indent=True)
-                #     files_in_wad.add(chunk.hash)
-                
+                        hashes[newhash] = newpath
+                        chunk.hash = newhash
+                        chunk.extension = "tex"
+                        chunk.data = newdata
+                        files_in_wad.add(chunk.hash)
+                        count += 1
+                    except Exception as e:
+                        log(f'Failed conversion: "{chunk.hash}" Unknown error: {e}',"error", indent=True)
+                    
+                elif chunk.extension == "tex":
+                    log(f"Skipping: {this_string}", indent=True)
+                    files_in_wad.add(chunk.hash)
+                else:
+                    log(f"Skipping: {this_string} is not a DDS or TEX file, skipping", indent=True)
+                    files_in_wad.add(chunk.hash)
             log(f"Converted {count} DDS files to TEX", indent=True, type="info")
 
         # Inner function to process bin files
@@ -481,7 +475,7 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
                                     if org_chunk.hash == chunk.hash:
                                         org_chunk.read_data(f)
                                         chunk.data = org_chunk.data
-                                        print(f'[OK  ] Copying VO events from latest league: {this_string}')
+                                        log(f'Copying VO events from latest league: {this_string}', indent=True, type="ok")
                                         
                 elif chunk.extension == "bin":
                     try:
@@ -680,3 +674,5 @@ elif path.isdir(input_path): # input is a directory
     
 else:
     exit_with_input("Couldn't find any files to fix", type="warning")
+    
+exit_with_input("Done!", type="success")
