@@ -16,6 +16,7 @@ import shutil
 # check if process called "cslol-manager.exe" is running
 import psutil
 import msvcrt
+import subprocess
 
 def get_process_exe(process_name):
     for proc in psutil.process_iter(['name']):
@@ -260,6 +261,13 @@ def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
         log(f"Parsing BIN file: {bin_path}","info")
     for entry in bin_file.entries:
         if entry.type == cached_bin['SkinCharacterDataProperties']:
+            for field in entry.data:
+                if field.hash == cached_bin['IconSquare']:
+                    for char in champions.keys():
+                        if len(field.data.lower().split(f"/{char}/")) > 1:
+                            champion = char
+                            break
+                        
             has_hp_bar = False
             has_hp_style = False
             UnitHealthBarStyle = BINField()
@@ -282,7 +290,7 @@ def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
                             new_data.append(field)
                     if has_hp_style:
                         HealthBarData.data = new_data
-                        log(f"Set health bar for {bColor.OKGREEN}{champion.upper()}{bColor.ENDC} with style {UnitHealthBarStyle.data}", indent=True)
+                        log(f"Set health bar for {bColor.OKGREEN}{champion}{bColor.ENDC} with style {UnitHealthBarStyle.data}", indent=True)
                     else:
                         HealthBarData.data.append(UnitHealthBarStyle)
                         
@@ -293,9 +301,11 @@ def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
                 HealthBarData.hash_type = cached_bin['CharacterHealthBarDataRecord']
                 HealthBarData.data = [UnitHealthBarStyle]
                 entry.data.append(HealthBarData)
-                log(f"Set health bar to {champion} with style {UnitHealthBarStyle.data}", indent=True)
-                            
-                            
+                try:
+                    log(f"Set health bar to {str(champion).upper()} with style {UnitHealthBarStyle.data}", indent=True)
+                except Exception as e:
+                    pass
+
         if entry.type == cached_bin['StaticMaterialDef']:
             for field in entry.data:
                 if field.hash == cached_bin['SamplerValues']:
@@ -674,5 +684,6 @@ elif path.isdir(input_path): # input is a directory
     
 else:
     exit_with_input("Couldn't find any files to fix", type="warning")
-    
+
+subprocess.Popen(cslol_path)
 exit_with_input("Done!", type="success")
