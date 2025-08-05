@@ -135,6 +135,7 @@ def setup():
                 league_path = league_path_match.group(1).strip()
             if cslol_path_match:
                 cslol_path = cslol_path_match.group(1).strip()
+            
     
     champion_wad_path = path.join(path.dirname(league_path), "game", "data", "final", "champions")
     if path.exists(champion_wad_path):
@@ -209,7 +210,7 @@ def rename(obj, champion=None):
                 log(f"Renaming:   {text_line}{bColor.FAIL}.dds{bColor.ENDC}{bColor.OKGREEN}.tex{bColor.ENDC}", indent=True)
                 obj = obj.replace(".dds", ".tex")
             else:
-                log(f"Skipping (doesnt have .tex variant): {obj}", "warn", indent=True)
+                log(f"Skipping (doesn't have .tex variant): {obj}", "warn", indent=True)
                 pass
                 
     # is_shared_asset = (re.match(shared_regex, obj) is not None) if shared_regex else False
@@ -407,7 +408,11 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
                 elif chunk.extension == "dds" and not is_in_bin:
                     if path.basename(this_string).startswith("2x") or path.basename(this_string).startswith("4x"):
                         files_in_wad.add(chunk.hash)
-                        log(f"Skipping: {this_string} its a mipmap", indent=True)
+                        log(f"Skipping (mipmap): {this_string}", indent=True)
+                        continue
+                    if xxh64(this_string.replace(".dds",".tex").lower()).hexdigest() not in hashes.keys():
+                        log(f"Skipping (doesn't have .tex variant): {this_string}", indent=True)
+                        files_in_wad.add(chunk.hash)
                         continue
                     try:
                         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dds")
