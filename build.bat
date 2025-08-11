@@ -1,5 +1,5 @@
 @echo off
-set /p VERSION=<version.txt
+set /p VERSION=<src/version.txt
 echo Building MultiRitoFixes v%VERSION%
-pyinstaller --noconfirm MultiRitoFixes.spec
+pyinstaller --noconfirm src/MultiRitoFixes.spec
 echo Build completed. Output in dist/MultiRitoFixes-v%VERSION%/

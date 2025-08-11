@@ -1,5 +1,4 @@
 from io import BytesIO
-
 import sys
 from sys import argv
 from os import path, listdir, makedirs
@@ -11,12 +10,13 @@ import tempfile
 import json
 from functions import stream2tex 
 import subprocess
-from colorama import init, Fore, Style
+from colorama import Fore
 import shutil
-# check if process called "cslol-manager.exe" is running
 import psutil
 import msvcrt
 import subprocess
+import urllib.request
+import time
 
 def get_process_exe(process_name):
     for proc in psutil.process_iter(['name']):
@@ -29,29 +29,22 @@ def kill_process(process_name):
         if proc.info['name'] == process_name:
             proc.kill()
             log(f"Closed: {process_name}","ok")
-
-class bColor:
-    OKBLUE = Fore.BLUE
-    OKGREEN = Fore.GREEN
-    WARNING = Fore.YELLOW
-    FAIL = Fore.RED
-    ENDC = Style.RESET_ALL
     
 def log(message = "",type = "text", indent = False):
     
     type = type.lower()
     if indent:
-        message = "    " + message
+        message = "    " + message + Fore.RESET
     if type == "ok" or type == "success":
-        print(f"{bColor.OKGREEN}[OK_] {message}{bColor.ENDC}")
+        print(f"{Fore.GREEN}[OK_] {message}{Fore.RESET}")
     elif type == "text":
         print(f"[INF] {message}")
     elif type == "info":
-        print(f"{bColor.OKBLUE}[INF] {message}{bColor.ENDC}")
+        print(f"{Fore.BLUE}[INF] {message}{Fore.RESET}")
     elif type == "error" or type == "err":
-        print(f"{bColor.FAIL}[ERR] {message}{bColor.ENDC}")
+        print(f"{Fore.RED}[ERR] {message}{Fore.RESET}")
     elif type == "warning" or type == "warn":
-        print(f"{bColor.WARNING}[WRN] {message}{bColor.ENDC}")
+        print(f"{Fore.YELLOW}[WRN] {message}{Fore.RESET}")
 
 league_path = None
 cslol_path = None
@@ -78,10 +71,12 @@ class CACHED_BIN_HASHES(dict):
             return super().__getitem__(key)
 cached_bin = CACHED_BIN_HASHES()
 
-hashes_path = None
+hashes_path=None
 hashes = dict()
 hashes_in_bin = dict()
 files_in_wad = set()
+
+texconv_path = None
 
 def exit_with_input(message="Done!", type="text"):
     log(message, type=type)
@@ -92,24 +87,52 @@ def exit_with_input(message="Done!", type="text"):
 if len(argv) < 2:
     exit_with_input("Do not run this program directly, drag and drop file/folder on to the fixer", type="error")
     exit()
+def sync_hashes(url,cache_path):
+    name = path.basename(url)
+    sha_cache = path.join(cache_path, name + ".sha")
     
+    if path.exists(sha_cache):
+        # Check if last modified is older than 1 hour ago
+        last_modified = path.getmtime(sha_cache)
+        if last_modified > time.time() - 3600:
+            log(f"{name} was synced recently skipping","info", indent=True)
+            return
+
+    response = urllib.request.urlopen(url)
+    data = json.loads(response.read())
+    
+
+    sha = data.get('sha')
+    url = data.get('download_url')
+    
+    if path.exists(sha_cache):
+        with open(sha_cache, "r") as f:
+            cached_sha = f.read().strip()
+            if cached_sha == sha:
+                log(f"{name} is up to date","ok", indent=True)
+                return
+            else:
+                log(f"{name} is outdated","warning", indent=True)
+    else:
+        with open(sha_cache, "w") as f:
+            f.write(sha)
+    subprocess.run(["curl", "-L", "-o", path.join(cache_path, name), url])
+    log(f"Downloaded {name} to {path.join(cache_path, name)}","ok", indent=True)
 def setup():
     global league_path, cslol_path, champions, health_bars
-    global default_hp_style, hashes_path, hashes
+    global default_hp_style, hashes_path, hashes, texconv_path
     log("Setting up MultiRitoFixes...","info")
     temp_dir = tempfile.gettempdir()
     
-    fixer_cache_path = path.join(temp_dir, "multiritofixes", "config.ini")
+    fixer_cache_path = path.join(temp_dir, "multiritofixes")
     
-    if not path.exists(path.join(path.dirname(argv[0]), "texconv.exe")) and not shutil.which("texconv.exe"):
-        log("Texconv.exe not found in the current directory. Download and place it in the same folder as this program.","error")
-        exit_with_input("https://github.com/Microsoft/DirectXTex/releases/latest/download/texconv.exe", type="error")
+    config_path = path.join(fixer_cache_path, "config.ini")
 
     if not path.exists(fixer_cache_path):
         log("Fixer cache not found, creating new one...")
         
-        makedirs(path.dirname(fixer_cache_path), exist_ok=True)
-        
+        makedirs(fixer_cache_path, exist_ok=True)
+        log(f"New cache location: {fixer_cache_path}","info")
         cslol_path = get_process_exe('cslol-manager.exe')
         if cslol_path is None:
             exit_with_input("cslol-manager.exe is not running. Please start it and try again.")
@@ -120,14 +143,13 @@ def setup():
                     if line.startswith('leaguePath='):
                         league_path = line.split('=')[1].strip()
                         break
-        
-        with open(fixer_cache_path, 'w') as f:
+        with open(config_path, 'w') as f:
             f.write(f"[fixer]\nleaguePath={league_path}\n")
             f.write(f"cslolPath={cslol_path}\n")
         log(f"Created fixer cache at {fixer_cache_path}",  indent=True)
     else:
         log(f"Using existing fixer cache at {fixer_cache_path}", indent=True)
-        with open(fixer_cache_path, 'r') as f:
+        with open(config_path, 'r') as f:
             config_data = f.read()
             league_path_match = re.search(r'leaguePath\s*=\s*(.*)', config_data)
             cslol_path_match = re.search(r'cslolPath\s*=\s*(.*)', config_data)
@@ -135,7 +157,18 @@ def setup():
                 league_path = league_path_match.group(1).strip()
             if cslol_path_match:
                 cslol_path = cslol_path_match.group(1).strip()
-            
+    if not shutil.which("texconv.exe"):
+        # curl -L -o texconv.exe https://github.com/Microsoft/DirectXTex/releases/latest/download/texconv.exe into fixer_cache_path
+        if not path.exists(path.join(fixer_cache_path, "texconv.exe")):
+            subprocess.run(["curl", "-L", "-o", path.join(fixer_cache_path, "texconv.exe"), "https://github.com/Microsoft/DirectXTex/releases/latest/download/texconv.exe"])
+            texconv_path = path.join(fixer_cache_path, "texconv.exe")
+        else:
+            texconv_path = path.join(fixer_cache_path, "texconv.exe")
+    else:
+        texconv_path = shutil.which("texconv.exe")
+        
+    
+    
     
     champion_wad_path = path.join(path.dirname(league_path), "game", "data", "final", "champions")
     if path.exists(champion_wad_path):
@@ -178,33 +211,39 @@ def setup():
         "zacrebirthbloblet": 1
     })
 
-    if getattr(sys, 'frozen', False):
-        hashes_path = path.join(sys._MEIPASS, 'hashes.game.txt')
-    else:
-        hashes_path = 'hashes.game.txt'
-    if path.exists(hashes_path) and hashes_path != None:
-        with open(hashes_path, "r", encoding="utf-8") as file:
+    try:
+        part1= "https://api.github.com/repos/CommunityDragon/Data/contents/hashes/lol/hashes.game.txt.0"
+        part2= "https://api.github.com/repos/CommunityDragon/Data/contents/hashes/lol/hashes.game.txt.1"
+        sync_hashes(part1, fixer_cache_path)
+        sync_hashes(part2, fixer_cache_path)
+        
+        with open(path.join(fixer_cache_path, "hashes.game.txt.0"), "r", encoding="utf-8") as file:
             for line in file:
                 hash = line.split(" ")[0]
                 hashes[hash] = line.split(" ")[1].strip()
-        log(f"Loaded {len(hashes)} hashes from {hashes_path}", indent=True)
+        with open(path.join(fixer_cache_path, "hashes.game.txt.1"), "r", encoding="utf-8") as file:
+            for line in file:
+                hash = line.split(" ")[0]
+                hashes[hash] = line.split(" ")[1].strip()
+        log(f"Loaded {len(hashes)} hashes from {fixer_cache_path}", indent=True)
+    except Exception as e:
+        exit_with_input(f"Error syncing/loading hashes: {e}","error")
 
-    kill_process('cslol-manager.exe')
     log("Setup complete! ", "ok", indent=False)
     
 setup()
 
 def rename(obj, champion=None):
-    pattern = re.compile(r"^assets\/(characters|shared|spells|particles|maps|spells|perks).*\.dds$", re.IGNORECASE)
+    pattern = re.compile(r"^assets\/(characters|shared|perks|particles|maps|spells).*\.dds$", re.IGNORECASE)
     is_affected_asset = (re.match(pattern, obj) is not None)
     if is_affected_asset:
         if (xxh64(obj.lower()).hexdigest() not in files_in_wad):
             if obj.endswith(".dds") and hashes.get(xxh64(obj.replace(".dds", ".tex").lower()).hexdigest(), None) != None:
                 text_line = obj.replace(".dds", "")
-                log(f"Renaming:   {text_line}{bColor.FAIL}.dds{bColor.ENDC}{bColor.OKGREEN}.tex{bColor.ENDC}", indent=True)
+                log(f"Renaming: {text_line}{Fore.RED}.dds{Fore.RESET}{Fore.GREEN}.tex{Fore.RESET}", indent=True)
                 obj = obj.replace(".dds", ".tex")
             else:
-                log(f"Skipping (doesn't have .tex variant): {obj}", "warn", indent=True)
+                log(f"Skipping: {Fore.RESET}{obj}{Fore.RED} no .tex variant", "warn", indent=True)
                 pass
                 
     obj = obj.replace("assets/", "ASSETS/", 1)
@@ -314,7 +353,6 @@ def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
     return bin_file
 
 def parse_wad(wad_path: str, wad_name: str, standalone=False):
-    log(f"Parsing WAD file: {wad_name}", "info", indent=(not standalone))
     wad_file = WAD()
     wad_file.read(wad_path)
     chunks_dict = {}
@@ -381,21 +419,27 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
                 elif chunk.extension == "dds" and not is_in_bin:
                     if path.basename(this_string).startswith("2x") or path.basename(this_string).startswith("4x"):
                         files_in_wad.add(chunk.hash)
-                        log(f"Skipping (mipmap): {this_string}", indent=True)
+                        # Highlight both 2x and 4x prefixes in the log
+                        prefix = ""
+                        if path.basename(this_string).startswith("2x_"):
+                            prefix = f"{Fore.RED}2x_{Fore.RESET}"
+                        elif path.basename(this_string).startswith("4x_"):
+                            prefix = f"{Fore.RED}4x_{Fore.RESET}"
+                        log(f"Skipping: {Fore.RESET}{this_string.replace('2x_', prefix).replace('4x_', prefix)}", "warning", indent=True)
                         continue
                     if xxh64(this_string.replace(".dds",".tex").lower()).hexdigest() not in hashes.keys():
                         log(f"Skipping (doesn't have .tex variant): {this_string}", indent=True)
                         files_in_wad.add(chunk.hash)
                         continue
                     try:
+                        
                         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dds")
                         temp_file.write(chunk.data)
                         temp_file.close()
                         
-                        
                         with open(temp_file.name, "rb") as f:
                             dds_header = f.read(128)
-                            
+                        
                         width = int.from_bytes(dds_header[12:16], 'little')
                         height = int.from_bytes(dds_header[16:20], 'little')
                         
@@ -403,25 +447,25 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
                             #round texture dimentions to the nearest multiple of 4
                             width = (width + 3) // 4 * 4
                             height = (height + 3) // 4 * 4
-                            command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name, "-w", str(width), "-h", str(height)]
-                        command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name]
+                            command = [texconv_path, "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name, "-w", str(width), "-h", str(height)]
+                        command = [texconv_path, "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name]
                         subprocess.run(command, capture_output=True, text=True)
                         
                         
                         
                         if width % 4 != 0 or height % 4 != 0:
-                            log(f"{this_string} has non-power-of-4 dimensions ({width}x{height}), skipping conversion","warning", indent=True)
+                            log(f"Skipping: {Fore.RESET}{this_string} has non-power-of-4 dimensions ({width}x{height})","warning", indent=True)
                             files_in_wad.add(chunk.hash)
                             continue
-                        
                         
                         with open(temp_file.name, "rb") as out_f:
                             out_buffer = out_f.read()
                         
-                        
+
                         newdata = stream2tex(out_buffer)
+                        
                         newpath = this_string.replace(".dds",".tex")
-                        log(f"Converting: {newpath.replace('.tex',f'{bColor.FAIL}.dds{bColor.ENDC}{bColor.OKGREEN}.tex{bColor.ENDC}')}", indent=True)
+                        log(f"Converting: {newpath.replace('.tex',f'{Fore.RED}.dds{Fore.RESET}{Fore.GREEN}.tex{Fore.RESET}')}", indent=True)
                         newhash = xxh64(newpath).hexdigest()
                         
                         hashes[newhash] = newpath
@@ -431,13 +475,13 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
                         files_in_wad.add(chunk.hash)
                         count += 1
                     except Exception as e:
-                        log(f'Failed conversion: "{chunk.hash}" Unknown error: {e}',"error", indent=True)
+                        log(f'Failed conversion: "{hashes.get(chunk.hash,chunk.hash)}" Unknown error: {e}',"error", indent=True)
                     
                 elif chunk.extension == "tex":
-                    log(f"Skipping: {this_string}", indent=True)
+                    log(f"Skipping: {Fore.RESET}{this_string}", indent=True)
                     files_in_wad.add(chunk.hash)
                 else:
-                    log(f"Skipping: {this_string} is not a DDS or TEX file, skipping", indent=True)
+                    log(f"Skipping: {Fore.RESET}{this_string}{Fore.RED} is not a DDS or TEX file", indent=True)
                     files_in_wad.add(chunk.hash)
             log(f"Converted {count} DDS files to TEX", indent=True, type="info")
 
@@ -447,12 +491,12 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
                 if chunk.extension == "bnk":
                     this_string = hashes.get(chunk.hash, "no")
                     if this_string == "no":
-                        log(f"No path found for this bnk file {chunk.hash}, skipping", "warning", indent=True)
+                        log(f"Skipping: {Fore.RESET}{chunk.hash}{Fore.RED} cannot find path from hash for this bnk", "warning", indent=True)
                     elif this_string.endswith("sfx_events.bnk"):
                         new_string = this_string.replace("sfx_events.bnk", "sfx_events.old.bnk")
                         hashes[chunk.hash] = new_string
                         chunk.hash = xxh64(new_string).hexdigest()
-                        log(f'Renaming:   {new_string.replace(".old.", f"{bColor.OKBLUE}.old.{bColor.ENDC}")}', "info")
+                        log(f'Renaming:   {new_string.replace(".old.", f"{Fore.BLUE}.old.{Fore.RESET}")}', "info")
                     elif this_string.endswith("vo_events.bnk"):
                         pattern = re.compile(r"^([a-z]+)\.[a-z]{2}_[A-Z]{2}\.wad\.client$", re.IGNORECASE)
                         # in list directory of league_path find matching
@@ -477,7 +521,7 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
                     try:
                         this_string = hashes.get(chunk.hash, None)
                         if this_string:
-                            log(f'Processing BIN file: {this_string}', indent=True, type="info")
+                            log(f'Processing BIN file: {Fore.RESET}{this_string}', indent=True, type="info")
                         bin_file = BIN()
                         bin_file.read(path="", raw=chunk.data)
                         bin_file = parse_bin(chunk.hash, bin_file, is_standalone=False, champion=this_champion)
@@ -570,7 +614,7 @@ def parse_fantome(fantome_path):
     # Reuse parse_wad by writing the WAD bytes to a temp file
 
     try:
-            
+        
         for wad_name, wad_bytes in wads_dict.items():
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wad.client") as tmp_file:
                 tmp_file.write(wad_bytes)
@@ -627,6 +671,7 @@ elif path.isfile(input_path) and (input_path.endswith('.fantome') or input_path.
 
 elif path.isdir(input_path): # input is a directory
     from os import walk
+
     bin_files = []
     wad_files = []
     fantome_files = []
@@ -634,7 +679,8 @@ elif path.isdir(input_path): # input is a directory
 
     if path.basename(input_path) == "cslol-manager":
         exit_with_input('Don\'t run this on cslol-manager, drag and drop "installed" folder instead or a file', type="error")
-
+    elif path.basename(input_path) == "installed":
+        kill_process('cslol-manager.exe')
     for root, dirs, files in walk(input_path):
         for file in files:
             temp = file.lower()
@@ -672,5 +718,6 @@ elif path.isdir(input_path): # input is a directory
 else:
     exit_with_input("Couldn't find any files to fix", type="warning")
 
-subprocess.Popen(cslol_path)
+if get_process_exe("cslol-manager.exe") == None:
+    subprocess.Popen(cslol_path)
 exit_with_input("Done!", type="success")

@@ -1,1 +1,1 @@
-cls & python MultiRitoFixes.py %*
+cls & python src/MultiRitoFixes.py %*

@@ -1,0 +1,4 @@
+xxhash
+pyritofile
+colorama
+psutil

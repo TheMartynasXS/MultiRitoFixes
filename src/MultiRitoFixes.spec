@@ -2,14 +2,14 @@
 import os
 
 # Get version from environment variable if set, otherwise use a default
-version = os.environ.get('VERSION', '1.2.0')
+version = os.environ.get('VERSION', '0.0.0')
 name = f'MultiRitoFixes-v{version}'
 
 a = Analysis(
     ['MultiRitoFixes.py'],
     pathex=[],
     binaries=[],
-    datas=[('hashes.game.txt', '.'), ('LICENSE','.')],
+    datas=[('../LICENSE','.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
