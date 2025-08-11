@@ -195,14 +195,8 @@ def setup():
 setup()
 
 def rename(obj, champion=None):
-    pattern = re.compile(r"assets\/(characters\/|shared\/|spells\/).*\.dds$", re.IGNORECASE)
+    pattern = re.compile(r"^assets\/(characters|shared|spells|particles|maps|spells|perks).*\.dds$", re.IGNORECASE)
     is_affected_asset = (re.match(pattern, obj) is not None)
-    
-    shared_regex = re.compile(
-        rf"^ASSETS/(characters|shared|perks|particles|maps|spells)?.+\.", re.IGNORECASE
-        # rf"^ASSETS/(?!characters/{re.escape(champion)})(shared|perks|particles|maps|spells)?.+\.", re.IGNORECASE
-    ) if champion else None
-    
     if is_affected_asset:
         if (xxh64(obj.lower()).hexdigest() not in files_in_wad):
             if obj.endswith(".dds") and hashes.get(xxh64(obj.replace(".dds", ".tex").lower()).hexdigest(), None) != None:
@@ -213,13 +207,6 @@ def rename(obj, champion=None):
                 log(f"Skipping (doesn't have .tex variant): {obj}", "warn", indent=True)
                 pass
                 
-    # is_shared_asset = (re.match(shared_regex, obj) is not None) if shared_regex else False
-    # if is_shared_asset and xxh64(obj.lower()).hexdigest() in files_in_wad:
-    #     log(f"Repathing {obj} to ASSETS/rep/ in bin", indent=True)
-    #     obj = obj.replace("assets/", "ASSETS/rep/", 1)
-    # elif is_shared_asset and xxh64(obj.lower()).hexdigest() not in files_in_wad:
-    #     log(f"Repathing {obj} to ASSETS/rep/ in wad", "error",indent=True)
-    # else:
     obj = obj.replace("assets/", "ASSETS/", 1)
     return obj
 
@@ -230,31 +217,18 @@ def extract_hashes(obj, champion=None):
             hashes_in_bin[hash] = obj.lower()
     return obj
 
-def traverse_bin(obj, function=rename, champion=None):
+def traverse_bin(obj, function=extract_hashes, champion=None):
     if isinstance(obj, str):
-        return function(obj)
-
+        return function(obj, champion)
     elif isinstance(obj, list):
-        for i in range(len(obj)):
-            obj[i] = traverse_bin(obj[i], function, champion)
-        return obj
-    
+        return [traverse_bin(item, function, champion) for item in obj]
     elif isinstance(obj, BINField):
-        if obj.type == BINType.String:
-            obj.data = function(obj.data, champion)
-        elif obj.type == BINType.List:
-            for i in range(len(obj.data)):
-                if hasattr(obj.data[i], 'data'):
-                    obj.data[i].data = traverse_bin(obj.data[i].data, function, champion)
-                else:
-                    obj.data[i] = traverse_bin(obj.data[i], function, champion)
-        elif obj.type in (BINType.List2, BINType.Embed, BINType.Pointer):
-            obj.data = traverse_bin(obj.data, function, champion)
-    elif isinstance(obj, tuple):
-        #this is a pair of dash and BinField traverse binfield part
-        if len(obj) == 2 and isinstance(obj[1], BINField):
-            obj = (obj[0], traverse_bin(obj[1], function, champion))
+        obj.data = traverse_bin(obj.data, function, champion)
+        return obj
+    elif isinstance(obj, tuple) and len(obj) == 2 and isinstance(obj[1], BINField):
+        return (obj[0], traverse_bin(obj[1], function, champion))
     return obj
+
 
 
 def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
@@ -264,10 +238,11 @@ def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
         if entry.type == cached_bin['SkinCharacterDataProperties']:
             for field in entry.data:
                 if field.hash == cached_bin['IconSquare']:
-                    for char in champions.keys():
-                        if len(field.data.lower().split(f"/{char}/")) > 1:
-                            champion = char
-                            break
+                    char_regex = re.compile(rf"^assets\/characters\/([a-z0-9_]+)", re.IGNORECASE)
+                    match = char_regex.match(field.data)
+                    if match:
+                        champion = match.group(1)
+                        break
                         
             has_hp_bar = False
             has_hp_style = False
@@ -291,7 +266,7 @@ def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
                             new_data.append(field)
                     if has_hp_style:
                         HealthBarData.data = new_data
-                        log(f"Set health bar for {bColor.OKGREEN}{champion}{bColor.ENDC} with style {UnitHealthBarStyle.data}", indent=True)
+                        log(f"Set health bar for {Fore.LIGHTGREEN_EX}{champion}{Fore.RESET} with style {UnitHealthBarStyle.data}", indent=True)
                     else:
                         HealthBarData.data.append(UnitHealthBarStyle)
                         
@@ -302,10 +277,8 @@ def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
                 HealthBarData.hash_type = cached_bin['CharacterHealthBarDataRecord']
                 HealthBarData.data = [UnitHealthBarStyle]
                 entry.data.append(HealthBarData)
-                try:
-                    log(f"Set health bar to {str(champion).upper()} with style {UnitHealthBarStyle.data}", indent=True)
-                except Exception as e:
-                    pass
+                log(f"Set health bar to {str(champion).upper()} with style {UnitHealthBarStyle.data}", indent=True)
+                
 
         if entry.type == cached_bin['StaticMaterialDef']:
             for field in entry.data:
@@ -337,7 +310,7 @@ def parse_bin(bin_path, bin_file, is_standalone=False, champion=None):
     if not(is_standalone):
         for entry in bin_file.entries:
             for item in entry.data:
-                item.data = traverse_bin(item.data)             
+                item.data = traverse_bin(item.data, rename)             
     return bin_file
 
 def parse_wad(wad_path: str, wad_name: str, standalone=False):
@@ -418,9 +391,7 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
                         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dds")
                         temp_file.write(chunk.data)
                         temp_file.close()
-
-                        command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name]
-                        subprocess.run(command, capture_output=True, text=True)
+                        
                         
                         with open(temp_file.name, "rb") as f:
                             dds_header = f.read(128)
@@ -428,11 +399,21 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
                         width = int.from_bytes(dds_header[12:16], 'little')
                         height = int.from_bytes(dds_header[16:20], 'little')
                         
+                        if width % 4 != 0 or height % 4 != 0:
+                            #round texture dimentions to the nearest multiple of 4
+                            width = (width + 3) // 4 * 4
+                            height = (height + 3) // 4 * 4
+                            command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name, "-w", str(width), "-h", str(height)]
+                        command = [f"texconv.exe", "-o", path.dirname(temp_file.name), "-f", "BC3_UNORM", "-y", temp_file.name]
+                        subprocess.run(command, capture_output=True, text=True)
+                        
+                        
                         
                         if width % 4 != 0 or height % 4 != 0:
                             log(f"{this_string} has non-power-of-4 dimensions ({width}x{height}), skipping conversion","warning", indent=True)
                             files_in_wad.add(chunk.hash)
                             continue
+                        
                         
                         with open(temp_file.name, "rb") as out_f:
                             out_buffer = out_f.read()
@@ -511,6 +492,7 @@ def parse_wad(wad_path: str, wad_name: str, standalone=False):
         find_hash_data()
         transform_files()
         process_bin_files()
+        
             
     # Create the final WAD
     wad = WAD()
