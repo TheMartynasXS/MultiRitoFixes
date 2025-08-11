@@ -12,6 +12,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -55,6 +57,10 @@ jobs:
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@github.com"
           git fetch --tags
+          if git rev-parse ${{ env.VERSION }} >/dev/null 2>&1; then
+            git tag -d ${{ env.VERSION }}
+            git push --delete origin ${{ env.VERSION }}
+          fi
           git tag ${{ env.VERSION }}
           git push origin ${{ env.VERSION }}
 
