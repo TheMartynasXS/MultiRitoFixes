@@ -2,3 +2,4 @@ xxhash
 pyritofile
 colorama
 psutil
+pyinstaller
