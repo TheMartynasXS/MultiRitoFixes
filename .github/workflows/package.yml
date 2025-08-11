@@ -12,8 +12,6 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -52,17 +50,16 @@ jobs:
           overwrite: false
           include-hidden-files: false
 
-      - name: Create tag for release
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git fetch --tags
-          if git rev-parse ${{ env.VERSION }} >/dev/null 2>&1; then
-            git tag -d ${{ env.VERSION }}
-            git push --delete origin ${{ env.VERSION }}
-          fi
-          git tag ${{ env.VERSION }}
-          git push origin ${{ env.VERSION }}
+      - name: Create tag
+        uses: actions/github-script@v5
+        with:
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/${{ env.VERSION }}',
+              sha: context.sha
+            })
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
