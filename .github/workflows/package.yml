@@ -48,11 +48,18 @@ jobs:
           overwrite: false
           include-hidden-files: false
 
+      - name: Create tag for release
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git tag ${{ env.VERSION }}
+          git push origin ${{ env.VERSION }}
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
           name: Release ${{ env.VERSION }}
-          files: ${{ env.EXE_PATH }}
+          files: dist/MultiRitoFixes-v${{ env.VERSION }}.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
