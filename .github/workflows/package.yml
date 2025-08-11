@@ -12,8 +12,6 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -56,7 +54,10 @@ jobs:
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@github.com"
-          git tag ${{ env.VERSION }}
+          git fetch --tags
+          git tag ${{ env.VERSION }} HEAD
+          git tag --list
+          git show-ref --tags
           git push origin ${{ env.VERSION }}
 
       - name: Create Release
