@@ -41,8 +41,12 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.EXE_NAME }}
-          path: ${{ env.EXE_PATH }}
+          name: MultiRitoFixes-v${{ env.VERSION }}.exe
+          path: dist/MultiRitoFixes-v${{ env.VERSION }}.exe
+          if-no-files-found: warn
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
