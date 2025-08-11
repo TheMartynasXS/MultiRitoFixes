@@ -32,8 +32,23 @@ jobs:
         env:
           VERSION: ${{ env.VERSION }}
 
+      - name: Find built executable
+        id: find_exe
+        run: |
+          echo "EXE_NAME=MultiRitoFixes-v${{ env.VERSION }}.exe" >> $GITHUB_ENV
+          echo "EXE_PATH=dist/MultiRitoFixes-v${{ env.VERSION }}.exe" >> $GITHUB_ENV
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Windows-exe
-          path: dist/
+          name: ${{ env.EXE_NAME }}
+          path: ${{ env.EXE_PATH }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          files: ${{ env.EXE_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
