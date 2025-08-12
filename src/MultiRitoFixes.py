@@ -128,7 +128,7 @@ def setup():
     
     config_path = path.join(fixer_cache_path, "config.ini")
 
-    if not path.exists(fixer_cache_path):
+    if not path.exists(config_path):
         log("Fixer cache not found, creating new one...")
         
         makedirs(fixer_cache_path, exist_ok=True)
